@@ -38,6 +38,11 @@ cd saslfail
 sudo ./install-postfix-escalating-bans.sh
 ```
 
+You can also clone from the original repository:
+```bash
+git clone git@git.bogometer.com:shartman/saslfail.git
+```
+
 ### Alternative: Download Release
 ```bash
 # Download the latest release
