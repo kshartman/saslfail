@@ -1,0 +1,27 @@
+# Emacs backup files
+*~
+\#*\#
+.\#*
+
+# Vim swap files
+*.swp
+*.swo
+*~
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Backup files
+*.bak
+*.backup
+*.old
+
+# Log files
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+.tmp/
+.temp/
