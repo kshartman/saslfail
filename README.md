@@ -28,22 +28,24 @@ A progressive fail2ban protection system for Postfix mail servers that escalates
 
 ## 🚀 Quick Installation
 
-### Download and Install
+### Clone and Install
 ```bash
-# Download the installer
-wget https://your-server.com/install-postfix-escalating-bans.sh
-chmod +x install-postfix-escalating-bans.sh
+# Clone the repository
+git clone https://github.com/kshartman/saslfail.git
+cd saslfail
 
-# Run as root
+# Run the installer
 sudo ./install-postfix-escalating-bans.sh
 ```
 
-### Manual Installation
+### Alternative: Download Release
 ```bash
-# Make script executable
-chmod +x install-postfix-escalating-bans.sh
+# Download the latest release
+wget https://github.com/kshartman/saslfail/archive/refs/heads/main.zip
+unzip main.zip
+cd saslfail-main
 
-# Run installer
+# Run the installer
 sudo ./install-postfix-escalating-bans.sh
 ```
 
@@ -152,8 +154,7 @@ sudo fail2ban-regex /var/log/fail2ban.log /etc/fail2ban/filter.d/postfix-sasl-re
 ## 🗑️ Uninstallation
 
 ```bash
-# Run uninstaller
-chmod +x uninstall-postfix-escalating-bans.sh
+# From the cloned repository directory
 sudo ./uninstall-postfix-escalating-bans.sh
 ```
 
