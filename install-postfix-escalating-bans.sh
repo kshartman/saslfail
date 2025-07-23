@@ -59,55 +59,26 @@ mkdir -p "$BACKUP_DIR"
 cp -r "$FAIL2BAN_DIR"/* "$BACKUP_DIR/" 2>/dev/null || true
 echo "Backup created at: $BACKUP_DIR"
 
-# Create main SASL filter (using your proven working configuration)
-echo -e "${BLUE}Installing main SASL filter...${NC}"
-cat > "$FILTER_DIR/postfix-sasl-strict.conf" << 'EOF'
-# /etc/fail2ban/filter.d/postfix-sasl-strict.conf
-# Filter for Postfix SASL authentication failures - Latest Version
-# Blocks after 1 failed attempt for 48 hours
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-[Definition]
-# Match SASL authentication failures - handles all SASL methods including CRAM-MD5
-failregex = .*\[<HOST>\]: SASL [\w-]+ authentication failed
+# Copy filter files
+echo -e "${BLUE}Installing filter files...${NC}"
+if [[ -d "$SCRIPT_DIR/filter.d" ]]; then
+    cp "$SCRIPT_DIR/filter.d/postfix-sasl-strict.conf" "$FILTER_DIR/"
+    echo "  ✓ Installed postfix-sasl-strict.conf"
+else
+    echo -e "${RED}Error: filter.d directory not found in $SCRIPT_DIR${NC}"
+    exit 1
+fi
 
-# Let fail2ban auto-detect the date format
-datepattern = {^LN-BEG}
+# Copy second strike filter
+cp "$SCRIPT_DIR/filter.d/postfix-sasl-recidive.conf" "$FILTER_DIR/"
+echo "  ✓ Installed postfix-sasl-recidive.conf"
 
-# Ignore successful authentications
-ignoreregex =
-EOF
-
-# Create second strike recidive filter
-echo -e "${BLUE}Installing second strike filter...${NC}"
-cat > "$FILTER_DIR/postfix-sasl-recidive.conf" << 'EOF'
-# /etc/fail2ban/filter.d/postfix-sasl-recidive.conf
-# Catches IPs banned by the first-strike jail for 8-day escalation
-
-[Definition]
-# Match when someone gets banned by the first strike jail
-failregex = .*\[postfix-sasl-first\] Ban <HOST>
-
-# Use fail2ban's standard date format for its own logs  
-datepattern = ^%%Y-%%m-%%d %%H:%%M:%%S,%%f
-
-ignoreregex =
-EOF
-
-# Create third strike recidive filter
-echo -e "${BLUE}Installing third strike filter...${NC}"
-cat > "$FILTER_DIR/postfix-sasl-recidive-third.conf" << 'EOF'
-# /etc/fail2ban/filter.d/postfix-sasl-recidive-third.conf  
-# Catches IPs banned by the second-strike jail for 32-day escalation
-
-[Definition]
-# Match when someone gets banned by the second strike jail
-failregex = .*\[postfix-sasl-second\] Ban <HOST>
-
-# Use fail2ban's standard date format for its own logs
-datepattern = ^%%Y-%%m-%%d %%H:%%M:%%S,%%f
-
-ignoreregex =
-EOF
+# Copy third strike filter
+cp "$SCRIPT_DIR/filter.d/postfix-sasl-recidive-third.conf" "$FILTER_DIR/"
+echo "  ✓ Installed postfix-sasl-recidive-third.conf"
 
 # Backup existing jail config if it exists
 if [[ -f "$JAIL_DIR/postfix-sasl-strict.conf" ]]; then
@@ -115,100 +86,35 @@ if [[ -f "$JAIL_DIR/postfix-sasl-strict.conf" ]]; then
     mv "$JAIL_DIR/postfix-sasl-strict.conf" "$JAIL_DIR/postfix-sasl-strict.conf.backup-$(date +%Y%m%d-%H%M%S)"
 fi
 
-# Create escalating jail configuration
-echo -e "${BLUE}Installing escalating jail configuration...${NC}"
-cat > "$JAIL_DIR/postfix-sasl-escalating.conf" << EOF
-# /etc/fail2ban/jail.d/postfix-sasl-escalating.conf
-# Progressive ban system: 48h -> 8 days -> 32 days
+# Copy jail configuration
+echo -e "${BLUE}Installing jail configuration...${NC}"
+if [[ -d "$SCRIPT_DIR/jail.d" ]]; then
+    # Read the template jail config and substitute email variables
+    JAIL_CONTENT=$(cat "$SCRIPT_DIR/jail.d/postfix-sasl-escalating.conf")
+    
+    # Replace email placeholders with actual configuration
+    JAIL_CONTENT="${JAIL_CONTENT//\#         sendmail-whois\[name=postfix-sasl-1st, dest=admin@example.com\]/$EMAIL_CONFIG_FIRST}"
+    JAIL_CONTENT="${JAIL_CONTENT//\#         sendmail-whois\[name=postfix-sasl-2nd, dest=admin@example.com, subject=\"Second Strike Ban - 8 Days\"\]/$EMAIL_CONFIG_SECOND}"
+    JAIL_CONTENT="${JAIL_CONTENT//\#         sendmail-whois\[name=postfix-sasl-3rd, dest=admin@example.com, subject=\"Third Strike Ban - 32 Days\"\]/$EMAIL_CONFIG_THIRD}"
+    
+    # Write the processed content
+    echo "$JAIL_CONTENT" > "$JAIL_DIR/postfix-sasl-escalating.conf"
+    echo "  ✓ Installed postfix-sasl-escalating.conf"
+else
+    echo -e "${RED}Error: jail.d directory not found in $SCRIPT_DIR${NC}"
+    exit 1
+fi
 
-# First Strike: 48 hours (current system)
-[postfix-sasl-first]
-enabled = true
-port = smtp,465,587,submission,smtps
-logpath = /var/log/mail.log
-          /var/log/postfix.log
-          /var/log/maillog
-backend = auto
-maxretry = 1
-findtime = 86400
-bantime = 172800
-filter = postfix-sasl-strict
-action = iptables-multiport[name=postfix-sasl-1st, port="25,465,587", protocol=tcp]
-$EMAIL_CONFIG_FIRST
-ignoreip = 127.0.0.1/8 ::1 192.168.1.0/24 10.0.0.0/8 172.16.0.0/12
-
-# Second Strike: 8 days (recidive catches repeat offenders)
-[postfix-sasl-second]
-enabled = true
-port = smtp,465,587,submission,smtps
-logpath = /var/log/fail2ban.log
-backend = auto
-maxretry = 1
-findtime = 1209600
-bantime = 691200
-filter = postfix-sasl-recidive
-action = iptables-multiport[name=postfix-sasl-2nd, port="25,465,587", protocol=tcp]
-$EMAIL_CONFIG_SECOND
-ignoreip = 127.0.0.1/8 ::1 192.168.1.0/24 10.0.0.0/8 172.16.0.0/12
-
-# Third Strike: 32 days (catches third-time offenders)
-[postfix-sasl-third]
-enabled = true
-port = smtp,465,587,submission,smtps
-logpath = /var/log/fail2ban.log
-backend = auto
-maxretry = 1
-findtime = 2764800
-bantime = 2764800
-filter = postfix-sasl-recidive-third
-action = iptables-multiport[name=postfix-sasl-3rd, port="25,465,587", protocol=tcp]
-$EMAIL_CONFIG_THIRD
-ignoreip = 127.0.0.1/8 ::1 192.168.1.0/24 10.0.0.0/8 172.16.0.0/12
-EOF
-
-# Create monitoring script
+# Copy monitoring script
 echo -e "${BLUE}Installing monitoring script...${NC}"
-cat > "/usr/local/bin/monitor-postfix-bans.sh" << 'EOF'
-#!/bin/bash
-# Monitor escalating ban system status
-
-echo "=== POSTFIX SASL ESCALATING BAN SYSTEM ==="
-echo "$(date)"
-echo
-
-echo "🥊 FIRST STRIKE (48 hours):"
-sudo fail2ban-client status postfix-sasl-first 2>/dev/null | grep -E "(Currently banned|Total banned)" || echo "  Jail not active"
-echo
-
-echo "⚡ SECOND STRIKE (8 days):"  
-sudo fail2ban-client status postfix-sasl-second 2>/dev/null | grep -E "(Currently banned|Total banned)" || echo "  Jail not active"
-echo
-
-echo "💀 THIRD STRIKE (32 days):"
-sudo fail2ban-client status postfix-sasl-third 2>/dev/null | grep -E "(Currently banned|Total banned)" || echo "  Jail not active"
-echo
-
-echo "📊 SUMMARY:"
-FIRST=$(sudo fail2ban-client get postfix-sasl-first banip 2>/dev/null | wc -w)
-SECOND=$(sudo fail2ban-client get postfix-sasl-second banip 2>/dev/null | wc -w)  
-THIRD=$(sudo fail2ban-client get postfix-sasl-third banip 2>/dev/null | wc -w)
-TOTAL=$((FIRST + SECOND + THIRD))
-
-echo "  First Strike Bans:  $FIRST"
-echo "  Second Strike Bans: $SECOND" 
-echo "  Third Strike Bans:  $THIRD"
-echo "  Total Active Bans:  $TOTAL"
-echo
-
-echo "🔍 RECENT ESCALATIONS (last 24h):"
-sudo grep -E "\[(postfix-sasl-(second|third))\] Ban" /var/log/fail2ban.log | tail -10 2>/dev/null || echo "  No recent escalations"
-
-echo
-echo "📜 RECENT FIRST STRIKES (last 10):"
-sudo grep "\[postfix-sasl-first\] Ban" /var/log/fail2ban.log | tail -10 2>/dev/null || echo "  No recent first strikes"
-EOF
-
-chmod +x "/usr/local/bin/monitor-postfix-bans.sh"
+if [[ -f "$SCRIPT_DIR/monitor-postfix-bans.sh" ]]; then
+    cp "$SCRIPT_DIR/monitor-postfix-bans.sh" "/usr/local/bin/"
+    chmod +x "/usr/local/bin/monitor-postfix-bans.sh"
+    echo "  ✓ Installed monitor-postfix-bans.sh"
+else
+    echo -e "${RED}Error: monitor-postfix-bans.sh not found in $SCRIPT_DIR${NC}"
+    exit 1
+fi
 
 # Test configuration
 echo -e "${BLUE}Testing configuration...${NC}"
