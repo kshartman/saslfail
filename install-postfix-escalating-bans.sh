@@ -53,6 +53,24 @@ else
     EMAIL_CONFIG_THIRD="         sendmail-whois[name=postfix-sasl-3rd, dest=$EMAIL_ADDRESS, subject=\"Third Strike Ban - 32 Days\"]"
 fi
 
+# Prompt for ignored IP ranges (optional)
+echo
+echo -e "${YELLOW}Configure ignored IP ranges:${NC}"
+echo "Current default in jail.local [DEFAULT]: $(grep -E '^\s*ignoreip\s*=' /etc/fail2ban/jail.local 2>/dev/null | head -1 || echo 'Not configured')"
+echo
+echo "Press Enter to inherit from [DEFAULT], or enter custom IP ranges"
+echo "Example: 127.0.0.1/8 ::1 192.168.0.0/16 10.0.0.0/8"
+read -p "Ignored IPs: " IGNORE_IP_RANGES
+
+# Set ignoreip configuration
+if [[ -z "$IGNORE_IP_RANGES" ]]; then
+    echo -e "${BLUE}Will inherit ignoreip from [DEFAULT] section${NC}"
+    IGNOREIP_LINE=""
+else
+    echo -e "${GREEN}Custom ignored IPs: $IGNORE_IP_RANGES${NC}"
+    IGNOREIP_LINE="ignoreip = $IGNORE_IP_RANGES"
+fi
+
 # Create backup directory
 echo -e "${BLUE}Creating backup...${NC}"
 mkdir -p "$BACKUP_DIR"
@@ -96,6 +114,15 @@ if [[ -d "$SCRIPT_DIR/jail.d" ]]; then
     JAIL_CONTENT="${JAIL_CONTENT//\#         sendmail-whois\[name=postfix-sasl-1st, dest=admin@example.com\]/$EMAIL_CONFIG_FIRST}"
     JAIL_CONTENT="${JAIL_CONTENT//\#         sendmail-whois\[name=postfix-sasl-2nd, dest=admin@example.com, subject=\"Second Strike Ban - 8 Days\"\]/$EMAIL_CONFIG_SECOND}"
     JAIL_CONTENT="${JAIL_CONTENT//\#         sendmail-whois\[name=postfix-sasl-3rd, dest=admin@example.com, subject=\"Third Strike Ban - 32 Days\"\]/$EMAIL_CONFIG_THIRD}"
+    
+    # Handle ignoreip configuration
+    if [[ -z "$IGNOREIP_LINE" ]]; then
+        # Remove all ignoreip lines to inherit from DEFAULT
+        JAIL_CONTENT=$(echo "$JAIL_CONTENT" | grep -v "^ignoreip = ")
+    else
+        # Replace all ignoreip lines with custom configuration
+        JAIL_CONTENT=$(echo "$JAIL_CONTENT" | sed "s/^ignoreip = .*/$IGNOREIP_LINE/g")
+    fi
     
     # Write the processed content
     echo "$JAIL_CONTENT" > "$JAIL_DIR/postfix-sasl-escalating.conf"
@@ -185,6 +212,11 @@ if [[ -z "$EMAIL_ADDRESS" ]]; then
     echo "📧 Email notifications: DISABLED"
 else
     echo "📧 Email notifications: $EMAIL_ADDRESS"
+fi
+if [[ -z "$IGNORE_IP_RANGES" ]]; then
+    echo "🛡️  Ignored IPs: Inheriting from [DEFAULT]"
+else
+    echo "🛡️  Ignored IPs: $IGNORE_IP_RANGES"
 fi
 echo "📁 Backup location: $BACKUP_DIR"
 echo "🎯 Monitor command: monitor-postfix-bans.sh"
