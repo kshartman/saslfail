@@ -30,5 +30,51 @@ echo "  Third Strike Bans:  $THIRD"
 echo "  Total Active Bans:  $TOTAL"
 echo
 
-echo "🔍 RECENT ESCALATIONS (last 24h):"
+# Get banned IPs from each jail
+FIRST_IPS=$(sudo fail2ban-client get postfix-sasl-first banip 2>/dev/null | tr -d '[]' | tr ' ' '\n' | sort)
+SECOND_IPS=$(sudo fail2ban-client get postfix-sasl-second banip 2>/dev/null | tr -d '[]' | tr ' ' '\n' | sort)
+THIRD_IPS=$(sudo fail2ban-client get postfix-sasl-third banip 2>/dev/null | tr -d '[]' | tr ' ' '\n' | sort)
+
+# Show currently banned IPs by strike level
+echo "🚫 CURRENTLY BANNED IPs:"
+echo
+
+# Third strike IPs (most severe)
+echo "💀 Third Strike Only (32 days):"
+if [ -z "$THIRD_IPS" ]; then
+    echo "  None"
+else
+    echo "$THIRD_IPS" | sed 's/^/  /'
+fi
+echo
+
+# Second strike IPs (excluding those in third)
+echo "⚡ Second Strike Only (8 days):"
+if [ -z "$SECOND_IPS" ]; then
+    echo "  None"
+else
+    SECOND_ONLY=$(comm -23 <(echo "$SECOND_IPS") <(echo "$THIRD_IPS") 2>/dev/null)
+    if [ -z "$SECOND_ONLY" ]; then
+        echo "  None (all escalated to third strike)"
+    else
+        echo "$SECOND_ONLY" | sed 's/^/  /'
+    fi
+fi
+echo
+
+# First strike IPs (excluding those in second or third)
+echo "🥊 First Strike Only (48 hours):"
+if [ -z "$FIRST_IPS" ]; then
+    echo "  None"
+else
+    FIRST_ONLY=$(comm -23 <(echo "$FIRST_IPS") <(echo "$SECOND_IPS") 2>/dev/null)
+    if [ -z "$FIRST_ONLY" ]; then
+        echo "  None (all escalated to higher strikes)"
+    else
+        echo "$FIRST_ONLY" | sed 's/^/  /'
+    fi
+fi
+echo
+
+echo "🔍 RECENT BAN HISTORY (last 24h):"
 sudo grep -E "\[(postfix-sasl-(second|third))\] Ban" /var/log/fail2ban.log | tail -10 || echo "  No recent escalations"
