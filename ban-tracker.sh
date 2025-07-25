@@ -421,7 +421,14 @@ case "$1" in
             --by-ip) report_by_ip ;;
             --summary) report_summary ;;
             *)
-                echo "Usage: $0 report {--by-date|--by-ip|--summary}"
+                echo "Report options:"
+                echo "  report --by-date    Show all bans sorted by date (newest first)"
+                echo "  report --by-ip      Show all bans grouped by IP address"
+                echo "  report --summary    Show ban statistics summary"
+                echo
+                echo "Example: $0 report --by-date"
+                echo
+                echo "Use '$0 --help' for full documentation"
                 exit 1
                 ;;
         esac
