@@ -56,6 +56,7 @@ case "$NOTIF_MODE" in
         echo -e "${BLUE}Notifications disabled - bans will be tracked only${NC}"
         EMAIL_ADDRESS="none"
         NOTIFICATION_EMAIL="none"
+        BAN_NOTIFICATION_EMAIL="none"
         EMAIL_CONFIG_FIRST=""
         EMAIL_CONFIG_SECOND=""
         EMAIL_CONFIG_THIRD=""
@@ -69,6 +70,7 @@ case "$NOTIF_MODE" in
         fi
         echo -e "${GREEN}Smart notifications will be sent to: $EMAIL_ADDRESS${NC}"
         NOTIFICATION_EMAIL="$EMAIL_ADDRESS"
+        BAN_NOTIFICATION_EMAIL="$EMAIL_ADDRESS"
         EMAIL_CONFIG_FIRST=""
         EMAIL_CONFIG_SECOND=""
         EMAIL_CONFIG_THIRD=""
@@ -82,6 +84,7 @@ case "$NOTIF_MODE" in
         fi
         echo -e "${GREEN}Immediate notifications will be sent to: $EMAIL_ADDRESS${NC}"
         NOTIFICATION_EMAIL="$EMAIL_ADDRESS"
+        BAN_NOTIFICATION_EMAIL="$EMAIL_ADDRESS"
         EMAIL_CONFIG_FIRST="         sendmail-whois[name=postfix-sasl-1st, dest=$EMAIL_ADDRESS]"
         EMAIL_CONFIG_SECOND="         sendmail-whois[name=postfix-sasl-2nd, dest=$EMAIL_ADDRESS, subject=\"Second Strike Ban - 8 Days\"]"
         EMAIL_CONFIG_THIRD="         sendmail-whois[name=postfix-sasl-3rd, dest=$EMAIL_ADDRESS, subject=\"Third Strike Ban - 32 Days\"]"
@@ -97,6 +100,7 @@ case "$NOTIF_MODE" in
         echo -e "${YELLOW}Set up a cron job for daily summaries? (y/n):${NC}"
         read -p "Answer: " SETUP_CRON
         NOTIFICATION_EMAIL="$EMAIL_ADDRESS"
+        BAN_NOTIFICATION_EMAIL="none"
         CRON_SCHEDULE="daily"
         EMAIL_CONFIG_FIRST=""
         EMAIL_CONFIG_SECOND=""
@@ -113,6 +117,7 @@ case "$NOTIF_MODE" in
         echo -e "${YELLOW}Set up a cron job for weekly summaries? (y/n):${NC}"
         read -p "Answer: " SETUP_CRON
         NOTIFICATION_EMAIL="$EMAIL_ADDRESS"
+        BAN_NOTIFICATION_EMAIL="none"
         CRON_SCHEDULE="weekly"
         EMAIL_CONFIG_FIRST=""
         EMAIL_CONFIG_SECOND=""
@@ -224,6 +229,7 @@ if [[ -d "$SCRIPT_DIR/jail.d" ]]; then
     
     # Set notification_email variable
     JAIL_CONTENT=$(echo "$JAIL_CONTENT" | sed "s/%(notification_email)s/$NOTIFICATION_EMAIL/g")
+    JAIL_CONTENT=$(echo "$JAIL_CONTENT" | sed "s/%(ban_notification_email)s/$BAN_NOTIFICATION_EMAIL/g")
     
     # Handle optional immediate email actions
     if [[ -n "$EMAIL_CONFIG_FIRST" ]]; then
