@@ -428,6 +428,48 @@ report_current_bans() {
     echo "Note: Shows highest strike level for each IP currently banned"
 }
 
+report_active_bans() {
+    if [[ "$HAS_SQLITE" != "true" ]]; then
+        echo "Error: SQLite not available or fail2ban database not readable"
+        echo "Falling back to tracker-based current report..."
+        echo
+        report_current_bans
+        return
+    fi
+    
+    echo "=== Active Bans from Fail2Ban Database ==="
+    echo
+    
+    # Query fail2ban's authoritative ban data
+    sqlite3 -header -column "$F2B_DB" <<EOF
+SELECT 
+    ip as 'IP Address',
+    CASE 
+        WHEN jail LIKE '%third%' THEN '3'
+        WHEN jail LIKE '%second%' THEN '2'
+        WHEN jail LIKE '%first%' THEN '1'
+        ELSE '?'
+    END as 'Strike',
+    jail as 'Jail',
+    datetime(timeofban,'unixepoch','localtime') as 'Banned Since',
+    datetime(timeofban+bantime,'unixepoch','localtime') as 'Expires',
+    CAST((bantime / 86400.0) AS INTEGER) || ' days' as 'Duration'
+FROM bips 
+WHERE datetime(timeofban+bantime,'unixepoch','localtime') > datetime('now','localtime')
+ORDER BY 
+    CASE 
+        WHEN jail LIKE '%third%' THEN 1
+        WHEN jail LIKE '%second%' THEN 2
+        WHEN jail LIKE '%first%' THEN 3
+        ELSE 4
+    END,
+    timeofban DESC;
+EOF
+    
+    echo
+    echo "Source: fail2ban SQLite database (authoritative)"
+}
+
 report_summary() {
     echo "=== Ban Tracking Statistics ==="
     echo
@@ -452,6 +494,18 @@ report_summary() {
     local recent_unbans=$(awk -F'|' -v date="$yesterday" '$1 > date && $4 == "unban"' "$BAN_DB" | wc -l)
     echo "  Bans in last 24h: $recent_bans"
     echo "  Unbans in last 24h: $recent_unbans"
+    
+    # Add fail2ban database stats if available
+    if [[ "$HAS_SQLITE" == "true" ]]; then
+        echo
+        echo "Fail2Ban Database Statistics:"
+        local f2b_active=$(sqlite3 "$F2B_DB" "SELECT COUNT(*) FROM bips WHERE datetime(timeofban+bantime,'unixepoch','localtime') > datetime('now','localtime');")
+        local f2b_total=$(sqlite3 "$F2B_DB" "SELECT COUNT(*) FROM bips;")
+        local f2b_jails=$(sqlite3 "$F2B_DB" "SELECT COUNT(DISTINCT jail) FROM bips WHERE datetime(timeofban+bantime,'unixepoch','localtime') > datetime('now','localtime');")
+        echo "  Currently banned IPs: $f2b_active"
+        echo "  Total persistent bans: $f2b_total"
+        echo "  Active jails with bans: $f2b_jails"
+    fi
 }
 
 # Function to show help
@@ -479,7 +533,11 @@ COMMANDS:
         Show ban statistics summary
         
     report --current
-        Show currently banned IPs with their status and ban times
+        Show currently banned IPs from tracker database
+        
+    report --active
+        Show active bans from fail2ban SQLite database (if available)
+        Shows authoritative ban data directly from fail2ban
         
     daily-summary [email] [date]
         Generate daily summary report
@@ -527,6 +585,13 @@ FILES:
 EOF
 }
 
+# Check if fail2ban SQLite database is available
+F2B_DB="/var/lib/fail2ban/fail2ban.sqlite3"
+HAS_SQLITE=false
+if command -v sqlite3 >/dev/null 2>&1 && [[ -r "$F2B_DB" ]]; then
+    HAS_SQLITE=true
+fi
+
 # Main command processing
 case "$1" in
     --help|-h)
@@ -562,12 +627,16 @@ case "$1" in
             --by-ip) report_by_ip ;;
             --summary) report_summary ;;
             --current) report_current_bans ;;
+            --active) report_active_bans ;;
             *)
                 echo "Report options:"
                 echo "  report --by-date    Show all bans sorted by date (newest first)"
                 echo "  report --by-ip      Show all bans grouped by IP address"
                 echo "  report --summary    Show ban statistics summary"
-                echo "  report --current    Show currently banned IPs and their status"
+                echo "  report --current    Show currently banned IPs (from tracker)"
+                if [[ "$HAS_SQLITE" == "true" ]]; then
+                    echo "  report --active     Show active bans from fail2ban database"
+                fi
                 echo
                 echo "Example: $0 report --current"
                 echo
