@@ -46,18 +46,29 @@ record_ban() {
     local current_time=$(date '+%Y-%m-%d %H:%M:%S')
     local epoch_time=$(date +%s)
     
-    # Check if this is a restore after restart (same IP banned in same jail within last 60 seconds)
-    # Note: fail2ban calls ban() for both new bans and reban() restores with no distinction
-    local recent_ban=$(grep "|$ip|$jail|ban|" "$BAN_DB" 2>/dev/null | tail -1)
-    if [[ -n "$recent_ban" ]]; then
-        local last_ban_time=$(echo "$recent_ban" | cut -d'|' -f1)
-        local last_epoch=$(date -d "$last_ban_time" +%s 2>/dev/null || echo 0)
-        local time_diff=$((epoch_time - last_epoch))
+    # Check for existing ban and whether it's been unbanned
+    local last_ban=$(grep "|$ip|$jail|ban|" "$BAN_DB" 2>/dev/null | tail -1)
+    if [[ -n "$last_ban" ]]; then
+        local last_ban_time=$(echo "$last_ban" | cut -d'|' -f1)
         
-        # If banned in same jail within 60 seconds, likely a restore
-        if [[ $time_diff -lt 60 ]] && [[ $time_diff -ge 0 ]]; then
-            log_message "Skipping restore ban: IP=$ip, Jail=$jail (last ban $time_diff seconds ago)"
-            return
+        # Check if there's been an unban since the last ban
+        local last_unban=$(grep "|$ip|$jail|unban|" "$BAN_DB" 2>/dev/null | tail -1)
+        if [[ -n "$last_unban" ]]; then
+            local last_unban_time=$(echo "$last_unban" | cut -d'|' -f1)
+            # If unban is after last ban, this is a new offense
+            if [[ "$last_unban_time" > "$last_ban_time" ]]; then
+                log_message "New ban after unban: IP=$ip, Jail=$jail"
+            fi
+        else
+            # No unban found, check if this is a recent restore
+            local last_epoch=$(date -d "$last_ban_time" +%s 2>/dev/null || echo 0)
+            local time_diff=$((epoch_time - last_epoch))
+            
+            # If banned in same jail within 60 seconds without unban, likely a restore
+            if [[ $time_diff -lt 60 ]] && [[ $time_diff -ge 0 ]]; then
+                log_message "Skipping restore ban: IP=$ip, Jail=$jail (last ban $time_diff seconds ago)"
+                return
+            fi
         fi
     fi
     
@@ -100,6 +111,21 @@ record_ban() {
             sed -i "s/^$ip|.*|0$/$ip|$first_ban_time|$strike_level|1/" "$NOTIFICATION_STATE"
         fi
     fi
+}
+
+# Function to record an unban event
+record_unban() {
+    local ip="$1"
+    local jail="$2"
+    local current_time=$(date '+%Y-%m-%d %H:%M:%S')
+    local strike_level=$(get_strike_level "$jail")
+    
+    # Record in database
+    echo "$current_time|$ip|$jail|unban|$strike_level|0" >> "$BAN_DB"
+    log_message "Recorded unban: IP=$ip, Jail=$jail, Strike=$strike_level"
+    
+    # Remove from notification state since IP is unbanned
+    sed -i "/^$ip|/d" "$NOTIFICATION_STATE"
 }
 
 # Function to send notification
@@ -296,10 +322,10 @@ Database Location: $BAN_DB"
 report_by_date() {
     echo "=== Ban Report - Sorted by Date (Newest First) ==="
     echo
-    printf "%-20s | %-15s | %-8s | %-20s\n" "Timestamp" "IP Address" "Strike" "Jail"
-    echo "--------------------------------------------------------------------------------"
+    printf "%-20s | %-15s | %-6s | %-8s | %-20s\n" "Timestamp" "IP Address" "Action" "Strike" "Jail"
+    echo "------------------------------------------------------------------------------------------"
     tail -n +2 "$BAN_DB" | sort -r | while IFS='|' read -r timestamp ip jail action strike notified; do
-        [[ "$action" == "ban" ]] && printf "%-20s | %-15s | %-8s | %-20s\n" "$timestamp" "$ip" "$strike" "$jail"
+        printf "%-20s | %-15s | %-6s | %-8s | %-20s\n" "$timestamp" "$ip" "$action" "$strike" "$jail"
     done
 }
 
@@ -314,10 +340,11 @@ report_by_ip() {
         [[ -z "$ip" ]] && continue
         
         local ban_count=$(grep "|$ip|" "$BAN_DB" | grep "|ban|" | wc -l)
-        echo "$ip ($ban_count bans):"
+        local unban_count=$(grep "|$ip|" "$BAN_DB" | grep "|unban|" | wc -l)
+        echo "$ip ($ban_count bans, $unban_count unbans):"
         
-        grep "|$ip|" "$BAN_DB" | grep "|ban|" | while IFS='|' read -r timestamp ip_check jail action strike notified; do
-            printf "  %-20s | Strike %s | %-20s\n" "$timestamp" "$strike" "$jail"
+        grep "|$ip|" "$BAN_DB" | while IFS='|' read -r timestamp ip_check jail action strike notified; do
+            printf "  %-20s | %-6s | Strike %s | %-20s\n" "$timestamp" "$action" "$strike" "$jail"
         done
         echo
     done <<< "$ips"
@@ -328,6 +355,7 @@ report_summary() {
     echo
     echo "Database: $BAN_DB"
     echo "Total recorded bans: $(tail -n +2 "$BAN_DB" | grep "|ban|" | wc -l)"
+    echo "Total recorded unbans: $(tail -n +2 "$BAN_DB" | grep "|unban|" | wc -l)"
     echo "Unique IPs: $(tail -n +2 "$BAN_DB" | cut -d'|' -f2 | sort -u | wc -l)"
     echo
     echo "Bans by strike level:"
@@ -335,10 +363,17 @@ report_summary() {
     echo "  Strike 2: $(grep "|ban|2|" "$BAN_DB" | wc -l)"
     echo "  Strike 3: $(grep "|ban|3|" "$BAN_DB" | wc -l)"
     echo
+    echo "Unbans by strike level:"
+    echo "  Strike 1: $(grep "|unban|1|" "$BAN_DB" | wc -l)"
+    echo "  Strike 2: $(grep "|unban|2|" "$BAN_DB" | wc -l)"
+    echo "  Strike 3: $(grep "|unban|3|" "$BAN_DB" | wc -l)"
+    echo
     echo "Recent activity (last 24h):"
     local yesterday=$(date -d '24 hours ago' '+%Y-%m-%d %H:%M:%S')
-    local recent_count=$(awk -F'|' -v date="$yesterday" '$1 > date && $4 == "ban"' "$BAN_DB" | wc -l)
-    echo "  Bans in last 24h: $recent_count"
+    local recent_bans=$(awk -F'|' -v date="$yesterday" '$1 > date && $4 == "ban"' "$BAN_DB" | wc -l)
+    local recent_unbans=$(awk -F'|' -v date="$yesterday" '$1 > date && $4 == "unban"' "$BAN_DB" | wc -l)
+    echo "  Bans in last 24h: $recent_bans"
+    echo "  Unbans in last 24h: $recent_unbans"
 }
 
 # Function to show help
@@ -352,6 +387,9 @@ USAGE:
 COMMANDS:
     record-ban <ip> <jail> [email]
         Record a ban event (called by fail2ban action)
+        
+    record-unban <ip> <jail>
+        Record an unban event (called by fail2ban action)
         
     report --by-date
         Show all bans sorted by date (newest first)
@@ -420,6 +458,13 @@ case "$1" in
             exit 1
         fi
         record_ban "$2" "$3" "${4:-}"
+        ;;
+    record-unban)
+        if [[ $# -lt 3 ]]; then
+            echo "Usage: $0 record-unban <ip> <jail>"
+            exit 1
+        fi
+        record_unban "$2" "$3"
         ;;
     process-pending)
         process_pending "${2:-}"
