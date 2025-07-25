@@ -46,13 +46,8 @@ record_ban() {
     local current_time=$(date '+%Y-%m-%d %H:%M:%S')
     local epoch_time=$(date +%s)
     
-    # Check if this is a restore event using F2B_RESTORE environment variable
-    if [[ "$F2B_RESTORE" == "1" ]]; then
-        log_message "Skipping restore ban (F2B_RESTORE=1): IP=$ip, Jail=$jail"
-        return
-    fi
-    
-    # Fallback: Check if this is a restore after restart (same IP banned in same jail within last 60 seconds)
+    # Check if this is a restore after restart (same IP banned in same jail within last 60 seconds)
+    # Note: fail2ban calls ban() for both new bans and reban() restores with no distinction
     local recent_ban=$(tail -20 "$BAN_DB" 2>/dev/null | grep "|$ip|$jail|ban|" | tail -1)
     if [[ -n "$recent_ban" ]]; then
         local last_ban_time=$(echo "$recent_ban" | cut -d'|' -f1)
@@ -61,7 +56,7 @@ record_ban() {
         
         # If banned in same jail within 60 seconds, likely a restore
         if [[ $time_diff -lt 60 ]] && [[ $time_diff -ge 0 ]]; then
-            log_message "Skipping restore ban (60s heuristic): IP=$ip, Jail=$jail (last ban $time_diff seconds ago)"
+            log_message "Skipping restore ban: IP=$ip, Jail=$jail (last ban $time_diff seconds ago)"
             return
         fi
     fi
