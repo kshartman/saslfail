@@ -34,7 +34,6 @@ kept_entries = []
 removed_count = 0
 
 print("Processing entries to remove duplicates...")
-print(f"Total entries to process: {len(entries)}")
 
 for line in entries:
     line = line.strip()
@@ -61,10 +60,6 @@ for line in entries:
     # Create key
     key = f"{ip}|{jail}"
     
-    # Debug: Print first few entries
-    if len(kept_entries) < 5 or ip == "173.212.200.84":
-        print(f"  Processing: {timestamp_str} {ip} {jail} (key: {key})")
-    
     # Check if duplicate - we've seen this IP/jail combination before
     if key in last_seen:
         last_timestamp = last_seen[key]
@@ -73,8 +68,6 @@ for line in entries:
         continue
     
     # Keep this entry (first occurrence)
-    if len(kept_entries) < 5 or ip == "173.212.200.84":
-        print(f"  Keeping first occurrence: {timestamp_str} {ip} {jail}")
     kept_entries.append(line + '\n')
     last_seen[key] = timestamp_str
 
