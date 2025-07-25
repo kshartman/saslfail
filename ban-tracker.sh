@@ -376,11 +376,15 @@ report_current_bans() {
             if [[ -n "$third_unban" ]]; then
                 local unban_time=$(echo "$third_unban" | cut -d'|' -f1)
                 if [[ "$ban_time" > "$unban_time" ]]; then
-                    printf "%-15s | %-8s | %-20s | %-20s | %-10s\n" "$ip" "3" "postfix-sasl-third" "$ban_time" "32 days"
+                    # Currently banned - find the original ban (first ban after last real unban or first ever)
+                    local original_ban=$(grep "|$ip|postfix-sasl-third|ban|" "$BAN_DB" | head -1 | cut -d'|' -f1)
+                    printf "%-15s | %-8s | %-20s | %-20s | %-10s\n" "$ip" "3" "postfix-sasl-third" "$original_ban" "32 days"
                     continue
                 fi
             else
-                printf "%-15s | %-8s | %-20s | %-20s | %-10s\n" "$ip" "3" "postfix-sasl-third" "$ban_time" "32 days"
+                # No unban record - use first ban time
+                local original_ban=$(grep "|$ip|postfix-sasl-third|ban|" "$BAN_DB" | head -1 | cut -d'|' -f1)
+                printf "%-15s | %-8s | %-20s | %-20s | %-10s\n" "$ip" "3" "postfix-sasl-third" "$original_ban" "32 days"
                 continue
             fi
         fi
@@ -390,11 +394,15 @@ report_current_bans() {
             if [[ -n "$second_unban" ]]; then
                 local unban_time=$(echo "$second_unban" | cut -d'|' -f1)
                 if [[ "$ban_time" > "$unban_time" ]]; then
-                    printf "%-15s | %-8s | %-20s | %-20s | %-10s\n" "$ip" "2" "postfix-sasl-second" "$ban_time" "8 days"
+                    # Currently banned - find the original ban
+                    local original_ban=$(grep "|$ip|postfix-sasl-second|ban|" "$BAN_DB" | head -1 | cut -d'|' -f1)
+                    printf "%-15s | %-8s | %-20s | %-20s | %-10s\n" "$ip" "2" "postfix-sasl-second" "$original_ban" "8 days"
                     continue
                 fi
             else
-                printf "%-15s | %-8s | %-20s | %-20s | %-10s\n" "$ip" "2" "postfix-sasl-second" "$ban_time" "8 days"
+                # No unban record - use first ban time
+                local original_ban=$(grep "|$ip|postfix-sasl-second|ban|" "$BAN_DB" | head -1 | cut -d'|' -f1)
+                printf "%-15s | %-8s | %-20s | %-20s | %-10s\n" "$ip" "2" "postfix-sasl-second" "$original_ban" "8 days"
                 continue
             fi
         fi
@@ -404,10 +412,14 @@ report_current_bans() {
             if [[ -n "$first_unban" ]]; then
                 local unban_time=$(echo "$first_unban" | cut -d'|' -f1)
                 if [[ "$ban_time" > "$unban_time" ]]; then
-                    printf "%-15s | %-8s | %-20s | %-20s | %-10s\n" "$ip" "1" "postfix-sasl-first" "$ban_time" "48 hours"
+                    # Currently banned - find the original ban
+                    local original_ban=$(grep "|$ip|postfix-sasl-first|ban|" "$BAN_DB" | head -1 | cut -d'|' -f1)
+                    printf "%-15s | %-8s | %-20s | %-20s | %-10s\n" "$ip" "1" "postfix-sasl-first" "$original_ban" "48 hours"
                 fi
             else
-                printf "%-15s | %-8s | %-20s | %-20s | %-10s\n" "$ip" "1" "postfix-sasl-first" "$ban_time" "48 hours"
+                # No unban record - use first ban time
+                local original_ban=$(grep "|$ip|postfix-sasl-first|ban|" "$BAN_DB" | head -1 | cut -d'|' -f1)
+                printf "%-15s | %-8s | %-20s | %-20s | %-10s\n" "$ip" "1" "postfix-sasl-first" "$original_ban" "48 hours"
             fi
         fi
     done <<< "$ips"
