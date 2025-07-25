@@ -34,6 +34,7 @@ kept_entries = []
 removed_count = 0
 
 print("Processing entries to remove duplicates...")
+print(f"Total entries to process: {len(entries)}")
 
 for line in entries:
     line = line.strip()
@@ -60,19 +61,22 @@ for line in entries:
     # Create key
     key = f"{ip}|{jail}"
     
-    # Check if duplicate
-    if key in last_seen:
-        last_epoch = last_seen[key]
-        time_diff = epoch - last_epoch
-        
-        if 0 <= time_diff < 60:
-            print(f"  Removing duplicate: {timestamp_str} {ip} {jail} ({int(time_diff)}s after previous)")
-            removed_count += 1
-            continue
+    # Debug: Print first few entries
+    if len(kept_entries) < 5 or ip == "173.212.200.84":
+        print(f"  Processing: {timestamp_str} {ip} {jail} (key: {key})")
     
-    # Keep this entry
+    # Check if duplicate - we've seen this IP/jail combination before
+    if key in last_seen:
+        last_timestamp = last_seen[key]
+        print(f"  Removing duplicate: {timestamp_str} {ip} {jail} (first seen at {last_timestamp})")
+        removed_count += 1
+        continue
+    
+    # Keep this entry (first occurrence)
+    if len(kept_entries) < 5 or ip == "173.212.200.84":
+        print(f"  Keeping first occurrence: {timestamp_str} {ip} {jail}")
     kept_entries.append(line + '\n')
-    last_seen[key] = epoch
+    last_seen[key] = timestamp_str
 
 print(f"\nOriginal entries: {len(entries)}")
 print(f"New entries: {len(kept_entries)}")
