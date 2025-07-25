@@ -96,7 +96,7 @@ case "$NOTIF_MODE" in
         echo -e "${GREEN}Daily summaries will be sent to: $EMAIL_ADDRESS${NC}"
         echo -e "${YELLOW}Set up a cron job for daily summaries? (y/n):${NC}"
         read -p "Answer: " SETUP_CRON
-        NOTIFICATION_EMAIL="daily"
+        NOTIFICATION_EMAIL="$EMAIL_ADDRESS"
         CRON_SCHEDULE="daily"
         EMAIL_CONFIG_FIRST=""
         EMAIL_CONFIG_SECOND=""
@@ -112,7 +112,7 @@ case "$NOTIF_MODE" in
         echo -e "${GREEN}Weekly summaries will be sent to: $EMAIL_ADDRESS${NC}"
         echo -e "${YELLOW}Set up a cron job for weekly summaries? (y/n):${NC}"
         read -p "Answer: " SETUP_CRON
-        NOTIFICATION_EMAIL="weekly"
+        NOTIFICATION_EMAIL="$EMAIL_ADDRESS"
         CRON_SCHEDULE="weekly"
         EMAIL_CONFIG_FIRST=""
         EMAIL_CONFIG_SECOND=""
