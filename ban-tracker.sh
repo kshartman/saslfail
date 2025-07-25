@@ -164,11 +164,6 @@ daily_summary() {
     local email="$1"
     local date="${2:-$(date '+%Y-%m-%d')}"
     
-    if [[ -z "$email" ]] || [[ "$email" == "none" ]]; then
-        echo "No email configured for daily summary"
-        return
-    fi
-    
     # Count events by strike level for specified date
     local first_strike=$(grep "^$date" "$BAN_DB" | grep "|1|" | wc -l)
     local second_strike=$(grep "^$date" "$BAN_DB" | grep "|2|" | wc -l)
@@ -181,9 +176,8 @@ daily_summary() {
     # Get top offending IPs
     local top_ips=$(grep "^$date" "$BAN_DB" | cut -d'|' -f2 | sort | uniq -c | sort -rn | head -10)
     
-    # Create summary email
-    cat <<EOF | mail -s "[SASLFAIL] Daily Ban Summary - $date" "$email"
-SASL Authentication Failure - Daily Summary
+    # Create summary content
+    local summary_content="SASL Authentication Failure - Daily Summary
 Date: $date
 
 Ban Statistics:
@@ -198,10 +192,20 @@ $top_ips
 Currently Active Bans:
 $(monitor-postfix-bans.sh 2>/dev/null | grep -A 100 "CURRENTLY BANNED IPs:" || echo "Unable to fetch current bans")
 
-Database Location: $BAN_DB
-EOF
+Database Location: $BAN_DB"
     
-    log_message "Sent daily summary to $email for $date"
+    if [[ -z "$email" ]] || [[ "$email" == "none" ]]; then
+        # Output to console
+        echo "=== [SASLFAIL] Daily Ban Summary - $date ==="
+        echo
+        echo "$summary_content"
+        echo
+        log_message "Displayed daily summary on console for $date"
+    else
+        # Send email
+        echo "$summary_content" | mail -s "[SASLFAIL] Daily Ban Summary - $date" "$email"
+        log_message "Sent daily summary to $email for $date"
+    fi
 }
 
 # Function to generate weekly summary
@@ -209,11 +213,6 @@ weekly_summary() {
     local email="$1"
     local end_date="${2:-$(date '+%Y-%m-%d')}"
     local start_date=$(date -d "$end_date -6 days" '+%Y-%m-%d')
-    
-    if [[ -z "$email" ]] || [[ "$email" == "none" ]]; then
-        echo "No email configured for weekly summary"
-        return
-    fi
     
     # Count events by strike level for the week
     local first_strike=0
@@ -243,9 +242,8 @@ weekly_summary() {
     local top_ips=$(awk -F'|' -v start="$start_date" -v end="$end_date 23:59:59" \
         '$1 >= start && $1 <= end {print $2}' "$BAN_DB" | sort | uniq -c | sort -rn | head -20)
     
-    # Create summary email
-    cat <<EOF | mail -s "[SASLFAIL] Weekly Ban Summary - $start_date to $end_date" "$email"
-SASL Authentication Failure - Weekly Summary
+    # Create summary content
+    local summary_content="SASL Authentication Failure - Weekly Summary
 Period: $start_date to $end_date
 
 Weekly Ban Statistics:
@@ -263,10 +261,20 @@ $top_ips
 Currently Active Bans:
 $(monitor-postfix-bans.sh 2>/dev/null | grep -A 100 "CURRENTLY BANNED IPs:" || echo "Unable to fetch current bans")
 
-Database Location: $BAN_DB
-EOF
+Database Location: $BAN_DB"
     
-    log_message "Sent weekly summary to $email for $start_date to $end_date"
+    if [[ -z "$email" ]] || [[ "$email" == "none" ]]; then
+        # Output to console
+        echo "=== [SASLFAIL] Weekly Ban Summary - $start_date to $end_date ==="
+        echo
+        echo "$summary_content"
+        echo
+        log_message "Displayed weekly summary on console for $start_date to $end_date"
+    else
+        # Send email
+        echo "$summary_content" | mail -s "[SASLFAIL] Weekly Ban Summary - $start_date to $end_date" "$email"
+        log_message "Sent weekly summary to $email for $start_date to $end_date"
+    fi
 }
 
 # Reporting functions
