@@ -326,8 +326,79 @@ report_summary() {
     echo "  Bans in last 24h: $recent_count"
 }
 
+# Function to show help
+show_help() {
+    cat << 'EOF'
+Ban Tracker for Postfix SASL Escalating Ban System
+
+USAGE:
+    ban-tracker.sh [COMMAND] [OPTIONS]
+
+COMMANDS:
+    record-ban <ip> <jail> [email]
+        Record a ban event (called by fail2ban action)
+        
+    report --by-date
+        Show all bans sorted by date (newest first)
+        
+    report --by-ip
+        Show all bans grouped by IP address
+        
+    report --summary
+        Show ban statistics summary
+        
+    daily-summary [email] [date]
+        Generate daily summary report
+        - If no email: outputs to console
+        - If no date: uses today
+        
+    weekly-summary [email] [date]
+        Generate weekly summary report (7 days ending on date)
+        - If no email: outputs to console
+        - If no date: uses today as end date
+        
+    process-pending [email]
+        Process pending notifications (for smart notification mode)
+        
+    cleanup
+        Remove old notification states (> 7 days)
+        
+    --help, -h
+        Show this help message
+
+EXAMPLES:
+    # View all bans ever recorded
+    ban-tracker.sh report --by-date
+    
+    # View bans grouped by IP
+    ban-tracker.sh report --by-ip
+    
+    # Get summary statistics
+    ban-tracker.sh report --summary
+    
+    # Generate daily report to console
+    ban-tracker.sh daily-summary
+    
+    # Send weekly summary via email
+    ban-tracker.sh weekly-summary admin@example.com
+    
+    # View bans for specific date
+    ban-tracker.sh daily-summary "" 2025-07-24
+
+FILES:
+    /var/lib/saslfail/bans.db           - Ban history database
+    /var/lib/saslfail/notification_state - Notification tracking
+    /var/lib/saslfail/tracker.log       - Ban tracker log
+
+EOF
+}
+
 # Main command processing
 case "$1" in
+    --help|-h)
+        show_help
+        exit 0
+        ;;
     record-ban)
         if [[ $# -lt 3 ]]; then
             echo "Usage: $0 record-ban <ip> <jail> [email]"
@@ -372,17 +443,9 @@ case "$1" in
         log_message "Cleaned up old notification states"
         ;;
     *)
-        echo "Usage: $0 {record-ban|process-pending|daily-summary|weekly-summary|report|cleanup} [args]"
+        echo "Usage: $0 [COMMAND] [OPTIONS]"
         echo
-        echo "Commands:"
-        echo "  record-ban <ip> <jail> [email]  - Record a ban event"
-        echo "  process-pending [email]          - Process pending notifications"
-        echo "  daily-summary [email] [date]     - Send daily summary"
-        echo "  weekly-summary [email] [date]    - Send weekly summary (date = end of week)"
-        echo "  report --by-date                 - Show all bans sorted by date"
-        echo "  report --by-ip                   - Show all bans grouped by IP"
-        echo "  report --summary                 - Show statistics"
-        echo "  cleanup                          - Clean old notification states"
+        echo "Use '$0 --help' for detailed command information"
         exit 1
         ;;
 esac
