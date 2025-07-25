@@ -23,34 +23,46 @@ cp "$DB_FILE" "$BACKUP_FILE"
 # Create header
 head -1 "$DB_FILE" > "$TEMP_FILE"
 
-# Process entries using awk to remove duplicates within 60-second windows
+# Process entries to remove duplicates within 60-second windows
 echo "Processing entries to remove duplicates..."
 
-tail -n +2 "$DB_FILE" | awk -F'|' '
-{
-    # Create key from IP and jail
-    key = $2 "|" $3
+# Use a simple approach that preserves the original format
+declare -A last_seen
+removed=0
+
+tail -n +2 "$DB_FILE" | while IFS= read -r line; do
+    # Parse the line
+    timestamp=$(echo "$line" | cut -d'|' -f1)
+    ip=$(echo "$line" | cut -d'|' -f2)
+    jail=$(echo "$line" | cut -d'|' -f3)
     
-    # Convert timestamp to epoch (approximate)
-    gsub(/[-:]/, " ", $1)
-    cmd = "date -d \"" $1 "\" +%s 2>/dev/null"
-    cmd | getline epoch
-    close(cmd)
+    # Convert timestamp to epoch
+    epoch=$(date -d "$timestamp" +%s 2>/dev/null || echo 0)
     
-    # Check if we have seen this key recently
-    if (key in last_seen) {
-        time_diff = epoch - last_seen[key]
-        if (time_diff < 60 && time_diff >= 0) {
-            # Skip this duplicate
-            print "  Removing duplicate:", $1, $2, $3, "(" time_diff "s after previous)"
-            next
-        }
-    }
+    # Create key for this IP/jail combination
+    key="${ip}|${jail}"
     
-    # Record this entry
-    print $0 >> "'"$TEMP_FILE"'"
-    last_seen[key] = epoch
-}'
+    # Check if we've seen this recently
+    if [[ -n "${last_seen[$key]}" ]]; then
+        last_epoch="${last_seen[$key]}"
+        time_diff=$((epoch - last_epoch))
+        
+        # Skip if within 60 seconds
+        if [[ $time_diff -lt 60 ]] && [[ $time_diff -ge 0 ]]; then
+            echo "  Removing duplicate: $timestamp $ip $jail (${time_diff}s after previous)"
+            ((removed++))
+            continue
+        fi
+    fi
+    
+    # Keep this entry - write the original line unchanged
+    echo "$line" >> "$TEMP_FILE"
+    
+    # Update last seen time
+    last_seen[$key]=$epoch
+done
+
+echo "Removed $removed duplicate entries"
 
 # Count entries
 ORIGINAL_COUNT=$(tail -n +2 "$DB_FILE" | wc -l)
