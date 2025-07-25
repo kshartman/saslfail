@@ -48,7 +48,7 @@ record_ban() {
     
     # Check if this is a restore after restart (same IP banned in same jail within last 60 seconds)
     # Note: fail2ban calls ban() for both new bans and reban() restores with no distinction
-    local recent_ban=$(tail -20 "$BAN_DB" 2>/dev/null | grep "|$ip|$jail|ban|" | tail -1)
+    local recent_ban=$(grep "|$ip|$jail|ban|" "$BAN_DB" 2>/dev/null | tail -1)
     if [[ -n "$recent_ban" ]]; then
         local last_ban_time=$(echo "$recent_ban" | cut -d'|' -f1)
         local last_epoch=$(date -d "$last_ban_time" +%s 2>/dev/null || echo 0)
