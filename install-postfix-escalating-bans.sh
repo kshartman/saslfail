@@ -36,22 +36,75 @@ if ! command -v fail2ban-client &> /dev/null; then
     exit 1
 fi
 
-# Prompt for email address (optional)
-echo -e "${YELLOW}Enter your email address for ban notifications (press Enter to skip):${NC}"
-read -p "Email: " EMAIL_ADDRESS
+# Prompt for notification configuration
+echo -e "${YELLOW}Configure email notifications:${NC}"
+echo "1) None - No email notifications"
+echo "2) Smart - Single email per IP (waits up to 5 min for escalation)"
+echo "3) Immediate - Email for every ban (current behavior)"
+echo "4) Daily - Daily summary only"
+echo
+read -p "Select notification mode [1-4] (default: 2): " NOTIF_MODE
 
-# Set email configuration based on input
-if [[ -z "$EMAIL_ADDRESS" ]]; then
-    echo -e "${BLUE}No email provided - notifications will be disabled${NC}"
-    EMAIL_CONFIG_FIRST="#         sendmail-whois[name=postfix-sasl-1st, dest=admin@example.com]"
-    EMAIL_CONFIG_SECOND="#         sendmail-whois[name=postfix-sasl-2nd, dest=admin@example.com, subject=\"Second Strike Ban - 8 Days\"]"
-    EMAIL_CONFIG_THIRD="#         sendmail-whois[name=postfix-sasl-3rd, dest=admin@example.com, subject=\"Third Strike Ban - 32 Days\"]"
-else
-    echo -e "${GREEN}Email notifications will be sent to: $EMAIL_ADDRESS${NC}"
-    EMAIL_CONFIG_FIRST="         sendmail-whois[name=postfix-sasl-1st, dest=$EMAIL_ADDRESS]"
-    EMAIL_CONFIG_SECOND="         sendmail-whois[name=postfix-sasl-2nd, dest=$EMAIL_ADDRESS, subject=\"Second Strike Ban - 8 Days\"]"
-    EMAIL_CONFIG_THIRD="         sendmail-whois[name=postfix-sasl-3rd, dest=$EMAIL_ADDRESS, subject=\"Third Strike Ban - 32 Days\"]"
-fi
+# Default to smart notifications
+NOTIF_MODE=${NOTIF_MODE:-2}
+
+# Set tracking and email configuration based on mode
+ENABLE_TRACKING="true"
+case "$NOTIF_MODE" in
+    1)
+        echo -e "${BLUE}Notifications disabled - bans will be tracked only${NC}"
+        EMAIL_ADDRESS="none"
+        NOTIFICATION_EMAIL="none"
+        EMAIL_CONFIG_FIRST=""
+        EMAIL_CONFIG_SECOND=""
+        EMAIL_CONFIG_THIRD=""
+        ;;
+    2)
+        echo -e "${YELLOW}Enter your email address for smart notifications:${NC}"
+        read -p "Email: " EMAIL_ADDRESS
+        if [[ -z "$EMAIL_ADDRESS" ]]; then
+            echo -e "${RED}Email required for smart notifications${NC}"
+            exit 1
+        fi
+        echo -e "${GREEN}Smart notifications will be sent to: $EMAIL_ADDRESS${NC}"
+        NOTIFICATION_EMAIL="$EMAIL_ADDRESS"
+        EMAIL_CONFIG_FIRST=""
+        EMAIL_CONFIG_SECOND=""
+        EMAIL_CONFIG_THIRD=""
+        ;;
+    3)
+        echo -e "${YELLOW}Enter your email address for immediate notifications:${NC}"
+        read -p "Email: " EMAIL_ADDRESS
+        if [[ -z "$EMAIL_ADDRESS" ]]; then
+            echo -e "${RED}Email required for immediate notifications${NC}"
+            exit 1
+        fi
+        echo -e "${GREEN}Immediate notifications will be sent to: $EMAIL_ADDRESS${NC}"
+        NOTIFICATION_EMAIL="$EMAIL_ADDRESS"
+        EMAIL_CONFIG_FIRST="         sendmail-whois[name=postfix-sasl-1st, dest=$EMAIL_ADDRESS]"
+        EMAIL_CONFIG_SECOND="         sendmail-whois[name=postfix-sasl-2nd, dest=$EMAIL_ADDRESS, subject=\"Second Strike Ban - 8 Days\"]"
+        EMAIL_CONFIG_THIRD="         sendmail-whois[name=postfix-sasl-3rd, dest=$EMAIL_ADDRESS, subject=\"Third Strike Ban - 32 Days\"]"
+        ;;
+    4)
+        echo -e "${YELLOW}Enter your email address for daily summaries:${NC}"
+        read -p "Email: " EMAIL_ADDRESS
+        if [[ -z "$EMAIL_ADDRESS" ]]; then
+            echo -e "${RED}Email required for daily summaries${NC}"
+            exit 1
+        fi
+        echo -e "${GREEN}Daily summaries will be sent to: $EMAIL_ADDRESS${NC}"
+        echo -e "${YELLOW}Set up a cron job for daily summaries? (y/n):${NC}"
+        read -p "Answer: " SETUP_CRON
+        NOTIFICATION_EMAIL="daily"
+        EMAIL_CONFIG_FIRST=""
+        EMAIL_CONFIG_SECOND=""
+        EMAIL_CONFIG_THIRD=""
+        ;;
+    *)
+        echo -e "${RED}Invalid selection${NC}"
+        exit 1
+        ;;
+esac
 
 # Prompt for ignored IP ranges (optional)
 echo
@@ -98,6 +151,33 @@ echo "  ✓ Installed postfix-sasl-recidive.conf"
 cp "$SCRIPT_DIR/filter.d/postfix-sasl-recidive-third.conf" "$FILTER_DIR/"
 echo "  ✓ Installed postfix-sasl-recidive-third.conf"
 
+# Install ban tracking system if enabled
+if [[ "$ENABLE_TRACKING" == "true" ]]; then
+    echo -e "${BLUE}Installing ban tracking system...${NC}"
+    
+    # Copy ban tracker script
+    cp "$SCRIPT_DIR/ban-tracker.sh" "/usr/local/bin/"
+    chmod +x "/usr/local/bin/ban-tracker.sh"
+    echo "  ✓ Installed ban-tracker.sh"
+    
+    # Copy ban tracker action
+    if [[ -d "$SCRIPT_DIR/action.d" ]]; then
+        cp "$SCRIPT_DIR/action.d/ban-tracker.conf" "$FAIL2BAN_DIR/action.d/"
+        echo "  ✓ Installed ban-tracker action"
+    fi
+    
+    # Create tracking directory
+    mkdir -p "/var/lib/saslfail"
+    echo "  ✓ Created tracking directory"
+    
+    # Set up daily summary cron if requested
+    if [[ "$SETUP_CRON" == "y" ]] || [[ "$SETUP_CRON" == "Y" ]]; then
+        CRON_LINE="0 0 * * * /usr/local/bin/ban-tracker.sh daily-summary $EMAIL_ADDRESS"
+        (crontab -l 2>/dev/null | grep -v "ban-tracker.sh daily-summary" ; echo "$CRON_LINE") | crontab -
+        echo "  ✓ Added daily summary cron job"
+    fi
+fi
+
 # Backup existing jail config if it exists
 if [[ -f "$JAIL_DIR/postfix-sasl-strict.conf" ]]; then
     echo -e "${YELLOW}Backing up existing jail config...${NC}"
@@ -107,8 +187,25 @@ fi
 # Copy jail configuration
 echo -e "${BLUE}Installing jail configuration...${NC}"
 if [[ -d "$SCRIPT_DIR/jail.d" ]]; then
-    # Read the template jail config and substitute email variables
-    JAIL_CONTENT=$(cat "$SCRIPT_DIR/jail.d/postfix-sasl-escalating.conf")
+    # Choose template based on tracking
+    if [[ "$ENABLE_TRACKING" == "true" ]]; then
+        TEMPLATE_FILE="$SCRIPT_DIR/jail.d/postfix-sasl-escalating-tracker.conf"
+    else
+        TEMPLATE_FILE="$SCRIPT_DIR/jail.d/postfix-sasl-escalating.conf"
+    fi
+    
+    # Read the template jail config and substitute variables
+    JAIL_CONTENT=$(cat "$TEMPLATE_FILE")
+    
+    # Set notification_email variable
+    JAIL_CONTENT=$(echo "$JAIL_CONTENT" | sed "s/%(notification_email)s/$NOTIFICATION_EMAIL/g")
+    
+    # Handle optional immediate email actions
+    if [[ -n "$EMAIL_CONFIG_FIRST" ]]; then
+        JAIL_CONTENT=$(echo "$JAIL_CONTENT" | sed "s/%(optional_immediate_email)s/$EMAIL_CONFIG_FIRST/g")
+    else
+        JAIL_CONTENT=$(echo "$JAIL_CONTENT" | sed "/%(optional_immediate_email)s/d")
+    fi
     
     # Replace email placeholders with actual configuration
     JAIL_CONTENT="${JAIL_CONTENT//\#         sendmail-whois\[name=postfix-sasl-1st, dest=admin@example.com\]/$EMAIL_CONFIG_FIRST}"
@@ -208,11 +305,18 @@ systemctl start postfix-ban-monitor.timer
 echo
 echo -e "${GREEN}=== INSTALLATION COMPLETE ===${NC}"
 echo
-if [[ -z "$EMAIL_ADDRESS" ]]; then
-    echo "📧 Email notifications: DISABLED"
-else
-    echo "📧 Email notifications: $EMAIL_ADDRESS"
+case "$NOTIF_MODE" in
+    1) echo "📧 Notifications: Disabled (tracking only)" ;;
+    2) echo "📧 Notifications: Smart mode to $EMAIL_ADDRESS" ;;
+    3) echo "📧 Notifications: Immediate mode to $EMAIL_ADDRESS" ;;
+    4) echo "📧 Notifications: Daily summary to $EMAIL_ADDRESS" ;;
+esac
+
+if [[ "$ENABLE_TRACKING" == "true" ]]; then
+    echo "📊 Ban tracking: Enabled (/var/lib/saslfail/bans.db)"
+    echo "📈 Reports: ban-tracker.sh report {--by-date|--by-ip|--summary}"
 fi
+
 if [[ -z "$IGNORE_IP_RANGES" ]]; then
     echo "🛡️  Ignored IPs: Inheriting from [DEFAULT]"
 else
