@@ -19,7 +19,13 @@ A progressive fail2ban protection system for Postfix mail servers that escalates
 
 ### Monitoring Tools
 - `/usr/local/bin/monitor-postfix-bans.sh` - Real-time ban status monitoring
+- `/usr/local/bin/ban-tracker.sh` - Ban tracking and reporting system
 - Systemd timer for automated hourly monitoring
+
+### Ban Tracking System (when enabled)
+- `/var/lib/saslfail/bans.db` - Persistent ban history database
+- `/var/lib/saslfail/notification_state` - Notification tracking
+- `/var/lib/saslfail/tracker.log` - Ban tracker log file
 
 ### Safety Features
 - Automatic backup of existing configuration
@@ -51,11 +57,12 @@ sudo ./install-postfix-escalating-bans.sh
 
 The installer will:
 1. ✅ Backup your existing fail2ban configuration
-2. ✅ Optionally prompt for your email address for notifications
-3. ✅ Install all required filters and jails
-4. ✅ Test the configuration
-5. ✅ Restart fail2ban
-6. ✅ Verify all jails are active
+2. ✅ Prompt for notification preferences (see below)
+3. ✅ Prompt for custom IP ranges to ignore (or inherit from DEFAULT)
+4. ✅ Install all required filters and jails
+5. ✅ Test the configuration
+6. ✅ Restart fail2ban
+7. ✅ Verify all jails are active
 
 ## 📊 Monitoring Your System
 
@@ -103,15 +110,63 @@ sudo fail2ban-client set postfix-sasl-third unbanip 1.2.3.4
 
 ## 🔧 Configuration
 
-### Email Notifications
-Email notifications are optional and can be configured during installation:
-- **If email provided**: Notifications sent for each escalation level
-- **If no email**: Notification lines are commented out (disabled)
+### Notification Options
 
-Notification subjects:
-- First Strike: Standard ban notification
-- Second Strike: "Second Strike Ban - 8 Days"
-- Third Strike: "Third Strike Ban - 32 Days"
+During installation, you can choose from 5 notification modes:
+
+1. **None** - No email notifications (tracking only)
+   - Bans are tracked in database
+   - No emails sent
+   - Good for systems with other monitoring
+
+2. **Smart** (Default) - Single email per IP
+   - Waits up to 5 minutes for escalation
+   - Sends ONE email at highest strike level reached
+   - Reduces email noise for rapid escalations
+
+3. **Immediate** - Email for every ban
+   - Original behavior
+   - Separate email for each strike level
+   - Most verbose option
+
+4. **Daily** - Daily summary only
+   - Single email at midnight with day's activity
+   - Optional cron job setup
+   - Good for high-traffic servers
+
+5. **Weekly** - Weekly summary only
+   - Single email on Mondays covering previous week
+   - Optional cron job setup
+   - Good for overview monitoring
+
+### Ban Tracking and Reporting
+
+All notification modes (except original immediate mode) enable the ban tracking system:
+
+```bash
+# View all bans sorted by date (newest first)
+ban-tracker.sh report --by-date
+
+# View all bans grouped by IP address
+ban-tracker.sh report --by-ip
+
+# View summary statistics
+ban-tracker.sh report --summary
+
+# Send manual daily summary
+ban-tracker.sh daily-summary admin@example.com
+
+# Send manual weekly summary
+ban-tracker.sh weekly-summary admin@example.com
+```
+
+### IP Whitelist Configuration
+
+During installation, you can:
+- **Press Enter** to inherit ignoreip from fail2ban's [DEFAULT] section
+- **Enter custom ranges** like: `127.0.0.1/8 ::1 192.168.0.0/16 10.0.0.0/8`
+
+This prevents local/trusted IPs from being banned or triggering notifications.
 
 ### Time Periods
 | Strike | Duration | Find Time | Description |

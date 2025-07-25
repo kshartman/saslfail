@@ -42,8 +42,9 @@ echo "1) None - No email notifications"
 echo "2) Smart - Single email per IP (waits up to 5 min for escalation)"
 echo "3) Immediate - Email for every ban (current behavior)"
 echo "4) Daily - Daily summary only"
+echo "5) Weekly - Weekly summary only"
 echo
-read -p "Select notification mode [1-4] (default: 2): " NOTIF_MODE
+read -p "Select notification mode [1-5] (default: 2): " NOTIF_MODE
 
 # Default to smart notifications
 NOTIF_MODE=${NOTIF_MODE:-2}
@@ -96,6 +97,23 @@ case "$NOTIF_MODE" in
         echo -e "${YELLOW}Set up a cron job for daily summaries? (y/n):${NC}"
         read -p "Answer: " SETUP_CRON
         NOTIFICATION_EMAIL="daily"
+        CRON_SCHEDULE="daily"
+        EMAIL_CONFIG_FIRST=""
+        EMAIL_CONFIG_SECOND=""
+        EMAIL_CONFIG_THIRD=""
+        ;;
+    5)
+        echo -e "${YELLOW}Enter your email address for weekly summaries:${NC}"
+        read -p "Email: " EMAIL_ADDRESS
+        if [[ -z "$EMAIL_ADDRESS" ]]; then
+            echo -e "${RED}Email required for weekly summaries${NC}"
+            exit 1
+        fi
+        echo -e "${GREEN}Weekly summaries will be sent to: $EMAIL_ADDRESS${NC}"
+        echo -e "${YELLOW}Set up a cron job for weekly summaries? (y/n):${NC}"
+        read -p "Answer: " SETUP_CRON
+        NOTIFICATION_EMAIL="weekly"
+        CRON_SCHEDULE="weekly"
         EMAIL_CONFIG_FIRST=""
         EMAIL_CONFIG_SECOND=""
         EMAIL_CONFIG_THIRD=""
@@ -170,11 +188,18 @@ if [[ "$ENABLE_TRACKING" == "true" ]]; then
     mkdir -p "/var/lib/saslfail"
     echo "  ✓ Created tracking directory"
     
-    # Set up daily summary cron if requested
+    # Set up summary cron if requested
     if [[ "$SETUP_CRON" == "y" ]] || [[ "$SETUP_CRON" == "Y" ]]; then
-        CRON_LINE="0 0 * * * /usr/local/bin/ban-tracker.sh daily-summary $EMAIL_ADDRESS"
-        (crontab -l 2>/dev/null | grep -v "ban-tracker.sh daily-summary" ; echo "$CRON_LINE") | crontab -
-        echo "  ✓ Added daily summary cron job"
+        if [[ "$CRON_SCHEDULE" == "daily" ]]; then
+            CRON_LINE="0 0 * * * /usr/local/bin/ban-tracker.sh daily-summary $EMAIL_ADDRESS"
+            (crontab -l 2>/dev/null | grep -v "ban-tracker.sh daily-summary" ; echo "$CRON_LINE") | crontab -
+            echo "  ✓ Added daily summary cron job"
+        elif [[ "$CRON_SCHEDULE" == "weekly" ]]; then
+            # Run weekly summary on Mondays at midnight (covers previous week)
+            CRON_LINE="0 0 * * 1 /usr/local/bin/ban-tracker.sh weekly-summary $EMAIL_ADDRESS"
+            (crontab -l 2>/dev/null | grep -v "ban-tracker.sh weekly-summary" ; echo "$CRON_LINE") | crontab -
+            echo "  ✓ Added weekly summary cron job (runs Mondays)"
+        fi
     fi
 fi
 
@@ -310,6 +335,7 @@ case "$NOTIF_MODE" in
     2) echo "📧 Notifications: Smart mode to $EMAIL_ADDRESS" ;;
     3) echo "📧 Notifications: Immediate mode to $EMAIL_ADDRESS" ;;
     4) echo "📧 Notifications: Daily summary to $EMAIL_ADDRESS" ;;
+    5) echo "📧 Notifications: Weekly summary to $EMAIL_ADDRESS" ;;
 esac
 
 if [[ "$ENABLE_TRACKING" == "true" ]]; then

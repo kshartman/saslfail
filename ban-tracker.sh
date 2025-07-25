@@ -204,6 +204,71 @@ EOF
     log_message "Sent daily summary to $email for $date"
 }
 
+# Function to generate weekly summary
+weekly_summary() {
+    local email="$1"
+    local end_date="${2:-$(date '+%Y-%m-%d')}"
+    local start_date=$(date -d "$end_date -6 days" '+%Y-%m-%d')
+    
+    if [[ -z "$email" ]] || [[ "$email" == "none" ]]; then
+        echo "No email configured for weekly summary"
+        return
+    fi
+    
+    # Count events by strike level for the week
+    local first_strike=0
+    local second_strike=0
+    local third_strike=0
+    local daily_stats=""
+    
+    for i in {6..0}; do
+        local check_date=$(date -d "$end_date -$i days" '+%Y-%m-%d')
+        local day_first=$(grep "^$check_date" "$BAN_DB" | grep "|1|" | wc -l)
+        local day_second=$(grep "^$check_date" "$BAN_DB" | grep "|2|" | wc -l)
+        local day_third=$(grep "^$check_date" "$BAN_DB" | grep "|3|" | wc -l)
+        
+        first_strike=$((first_strike + day_first))
+        second_strike=$((second_strike + day_second))
+        third_strike=$((third_strike + day_third))
+        
+        daily_stats="${daily_stats}$check_date: Strike1=$day_first, Strike2=$day_second, Strike3=$day_third\n"
+    done
+    
+    # Get unique IPs banned during the week
+    local unique_ips=$(awk -F'|' -v start="$start_date" -v end="$end_date 23:59:59" \
+        '$1 >= start && $1 <= end {print $2}' "$BAN_DB" | sort -u)
+    local unique_count=$(echo "$unique_ips" | grep -c .)
+    
+    # Get top offending IPs for the week
+    local top_ips=$(awk -F'|' -v start="$start_date" -v end="$end_date 23:59:59" \
+        '$1 >= start && $1 <= end {print $2}' "$BAN_DB" | sort | uniq -c | sort -rn | head -20)
+    
+    # Create summary email
+    cat <<EOF | mail -s "[SASLFAIL] Weekly Ban Summary - $start_date to $end_date" "$email"
+SASL Authentication Failure - Weekly Summary
+Period: $start_date to $end_date
+
+Weekly Ban Statistics:
+- First Strike Bans: $first_strike
+- Second Strike Bans: $second_strike  
+- Third Strike Bans: $third_strike
+- Unique IPs Banned: $unique_count
+
+Daily Breakdown:
+$(echo -e "$daily_stats")
+
+Top 20 Offending IPs This Week:
+$top_ips
+
+Currently Active Bans:
+$(monitor-postfix-bans.sh 2>/dev/null | grep -A 100 "CURRENTLY BANNED IPs:" || echo "Unable to fetch current bans")
+
+Database Location: $BAN_DB
+EOF
+    
+    log_message "Sent weekly summary to $email for $start_date to $end_date"
+}
+
 # Reporting functions
 report_by_date() {
     echo "=== Ban Report - Sorted by Date (Newest First) ==="
@@ -268,6 +333,9 @@ case "$1" in
     daily-summary)
         daily_summary "${2:-}" "${3:-}"
         ;;
+    weekly-summary)
+        weekly_summary "${2:-}" "${3:-}"
+        ;;
     report)
         case "$2" in
             --by-date) report_by_date ;;
@@ -296,12 +364,13 @@ case "$1" in
         log_message "Cleaned up old notification states"
         ;;
     *)
-        echo "Usage: $0 {record-ban|process-pending|daily-summary|report|cleanup} [args]"
+        echo "Usage: $0 {record-ban|process-pending|daily-summary|weekly-summary|report|cleanup} [args]"
         echo
         echo "Commands:"
         echo "  record-ban <ip> <jail> [email]  - Record a ban event"
         echo "  process-pending [email]          - Process pending notifications"
         echo "  daily-summary [email] [date]     - Send daily summary"
+        echo "  weekly-summary [email] [date]    - Send weekly summary (date = end of week)"
         echo "  report --by-date                 - Show all bans sorted by date"
         echo "  report --by-ip                   - Show all bans grouped by IP"
         echo "  report --summary                 - Show statistics"
