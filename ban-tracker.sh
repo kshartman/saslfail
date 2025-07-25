@@ -350,6 +350,72 @@ report_by_ip() {
     done <<< "$ips"
 }
 
+report_current_bans() {
+    echo "=== Currently Banned IPs ==="
+    echo
+    printf "%-15s | %-8s | %-20s | %-20s | %-10s\n" "IP Address" "Strike" "Jail" "Banned Since" "Duration"
+    echo "----------------------------------------------------------------------------------------"
+    
+    # Get unique IPs
+    local ips=$(tail -n +2 "$BAN_DB" | cut -d'|' -f2 | sort -u)
+    
+    while read -r ip; do
+        [[ -z "$ip" ]] && continue
+        
+        # Get last ban and unban for each jail
+        local first_ban=$(grep "|$ip|postfix-sasl-first|ban|" "$BAN_DB" | tail -1)
+        local first_unban=$(grep "|$ip|postfix-sasl-first|unban|" "$BAN_DB" | tail -1)
+        local second_ban=$(grep "|$ip|postfix-sasl-second|ban|" "$BAN_DB" | tail -1)
+        local second_unban=$(grep "|$ip|postfix-sasl-second|unban|" "$BAN_DB" | tail -1)
+        local third_ban=$(grep "|$ip|postfix-sasl-third|ban|" "$BAN_DB" | tail -1)
+        local third_unban=$(grep "|$ip|postfix-sasl-third|unban|" "$BAN_DB" | tail -1)
+        
+        # Check each strike level
+        if [[ -n "$third_ban" ]]; then
+            local ban_time=$(echo "$third_ban" | cut -d'|' -f1)
+            if [[ -n "$third_unban" ]]; then
+                local unban_time=$(echo "$third_unban" | cut -d'|' -f1)
+                if [[ "$ban_time" > "$unban_time" ]]; then
+                    printf "%-15s | %-8s | %-20s | %-20s | %-10s\n" "$ip" "3" "postfix-sasl-third" "$ban_time" "32 days"
+                    continue
+                fi
+            else
+                printf "%-15s | %-8s | %-20s | %-20s | %-10s\n" "$ip" "3" "postfix-sasl-third" "$ban_time" "32 days"
+                continue
+            fi
+        fi
+        
+        if [[ -n "$second_ban" ]]; then
+            local ban_time=$(echo "$second_ban" | cut -d'|' -f1)
+            if [[ -n "$second_unban" ]]; then
+                local unban_time=$(echo "$second_unban" | cut -d'|' -f1)
+                if [[ "$ban_time" > "$unban_time" ]]; then
+                    printf "%-15s | %-8s | %-20s | %-20s | %-10s\n" "$ip" "2" "postfix-sasl-second" "$ban_time" "8 days"
+                    continue
+                fi
+            else
+                printf "%-15s | %-8s | %-20s | %-20s | %-10s\n" "$ip" "2" "postfix-sasl-second" "$ban_time" "8 days"
+                continue
+            fi
+        fi
+        
+        if [[ -n "$first_ban" ]]; then
+            local ban_time=$(echo "$first_ban" | cut -d'|' -f1)
+            if [[ -n "$first_unban" ]]; then
+                local unban_time=$(echo "$first_unban" | cut -d'|' -f1)
+                if [[ "$ban_time" > "$unban_time" ]]; then
+                    printf "%-15s | %-8s | %-20s | %-20s | %-10s\n" "$ip" "1" "postfix-sasl-first" "$ban_time" "48 hours"
+                fi
+            else
+                printf "%-15s | %-8s | %-20s | %-20s | %-10s\n" "$ip" "1" "postfix-sasl-first" "$ban_time" "48 hours"
+            fi
+        fi
+    done <<< "$ips"
+    
+    echo
+    echo "Note: Shows highest strike level for each IP currently banned"
+}
+
 report_summary() {
     echo "=== Ban Tracking Statistics ==="
     echo
@@ -399,6 +465,9 @@ COMMANDS:
         
     report --summary
         Show ban statistics summary
+        
+    report --current
+        Show currently banned IPs with their status and ban times
         
     daily-summary [email] [date]
         Generate daily summary report
@@ -480,13 +549,15 @@ case "$1" in
             --by-date) report_by_date ;;
             --by-ip) report_by_ip ;;
             --summary) report_summary ;;
+            --current) report_current_bans ;;
             *)
                 echo "Report options:"
                 echo "  report --by-date    Show all bans sorted by date (newest first)"
                 echo "  report --by-ip      Show all bans grouped by IP address"
                 echo "  report --summary    Show ban statistics summary"
+                echo "  report --current    Show currently banned IPs and their status"
                 echo
-                echo "Example: $0 report --by-date"
+                echo "Example: $0 report --current"
                 echo
                 echo "Use '$0 --help' for full documentation"
                 exit 1
