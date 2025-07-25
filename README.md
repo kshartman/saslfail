@@ -18,9 +18,8 @@ A progressive fail2ban protection system for Postfix mail servers that escalates
 - `/etc/fail2ban/jail.d/postfix-sasl-escalating.conf` - Three-tier jail system
 
 ### Monitoring Tools
-- `/usr/local/bin/monitor-postfix-bans.sh` - Real-time ban status monitoring
+- `/usr/local/bin/monitor-postfix-bans.sh` - Real-time ban status monitoring (run manually)
 - `/usr/local/bin/ban-tracker.sh` - Ban tracking and reporting system
-- Systemd timer for automated hourly monitoring
 
 ### Ban Tracking System (when enabled)
 - `/var/lib/saslfail/bans.db` - Persistent ban history database
@@ -248,5 +247,16 @@ Key log locations:
 For issues or questions:
 1. Check fail2ban logs: `sudo tail -f /var/log/fail2ban.log`
 2. Verify configuration: `sudo fail2ban-client -t`
-3. Monitor system: `monitor-postfix-bans.sh`
+3. Monitor system: `monitor-postfix-bans.sh` (run manually)
 4. Review jail status: `sudo fail2ban-client status`
+5. Get ban statistics: `ban-tracker.sh report --summary`
+
+### Removing Old Monitoring Timer
+
+If you installed before this update, remove the hourly monitoring timer:
+```bash
+sudo systemctl stop postfix-ban-monitor.timer
+sudo systemctl disable postfix-ban-monitor.timer
+sudo rm -f /etc/systemd/system/postfix-ban-monitor.{timer,service}
+sudo systemctl daemon-reload
+```

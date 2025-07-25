@@ -47,6 +47,15 @@ rm -f /etc/fail2ban/filter.d/postfix-sasl-recidive-third.conf
 # Remove monitoring script
 rm -f /usr/local/bin/monitor-postfix-bans.sh
 
+# Remove ban tracker script
+rm -f /usr/local/bin/ban-tracker.sh
+
+# Remove ban tracker action
+rm -f /etc/fail2ban/action.d/ban-tracker.conf
+
+# Remove ban tracker data
+rm -rf /var/lib/saslfail
+
 # Remove systemd services
 systemctl stop postfix-ban-monitor.timer 2>/dev/null || true
 systemctl disable postfix-ban-monitor.timer 2>/dev/null || true

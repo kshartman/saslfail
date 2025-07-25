@@ -293,38 +293,9 @@ else
     echo -e "${YELLOW}⚠️  Only $ACTIVE_JAILS jails are active${NC}"
 fi
 
-# Create systemd service for monitoring (optional)
-echo -e "${BLUE}Creating monitoring service...${NC}"
-cat > "/etc/systemd/system/postfix-ban-monitor.service" << 'EOF'
-[Unit]
-Description=Postfix Ban Monitor
-After=fail2ban.service
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/bin/monitor-postfix-bans.sh
-User=root
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-cat > "/etc/systemd/system/postfix-ban-monitor.timer" << 'EOF'
-[Unit]
-Description=Run Postfix Ban Monitor every hour
-Requires=postfix-ban-monitor.service
-
-[Timer]
-OnCalendar=hourly
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-EOF
-
-systemctl daemon-reload
-systemctl enable postfix-ban-monitor.timer
-systemctl start postfix-ban-monitor.timer
+# Note: Automated monitoring timer removed to prevent journal spam
+# Users can run monitor-postfix-bans.sh manually when needed
+# Or use ban-tracker.sh for scheduled summaries
 
 # Final status report
 echo
