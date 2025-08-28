@@ -205,33 +205,157 @@ daily_summary() {
     local email="$1"
     local date="${2:-$(date '+%Y-%m-%d')}"
     
-    # Count events by strike level for specified date
-    local first_strike=$(grep "^$date" "$BAN_DB" | grep "|1|" | wc -l)
-    local second_strike=$(grep "^$date" "$BAN_DB" | grep "|2|" | wc -l)
-    local third_strike=$(grep "^$date" "$BAN_DB" | grep "|3|" | wc -l)
+    # Check if fail2ban is running
+    local f2b_status=""
+    if systemctl is-active fail2ban >/dev/null 2>&1; then
+        f2b_status="✓ Fail2ban is ACTIVE"
+    else
+        f2b_status="⚠️  WARNING: FAIL2BAN IS NOT RUNNING! No bans are being enforced!"
+    fi
     
-    # Get unique IPs banned on date
-    local unique_ips=$(grep "^$date" "$BAN_DB" | cut -d'|' -f2 | sort -u)
-    local unique_count=$(echo "$unique_ips" | grep -c .)
+    # Count NEW bans that occurred on specified date
+    local new_first_strike=$(grep "^$date" "$BAN_DB" | grep "|ban|1|" | wc -l)
+    local new_second_strike=$(grep "^$date" "$BAN_DB" | grep "|ban|2|" | wc -l)
+    local new_third_strike=$(grep "^$date" "$BAN_DB" | grep "|ban|3|" | wc -l)
     
-    # Get top offending IPs
-    local top_ips=$(grep "^$date" "$BAN_DB" | cut -d'|' -f2 | sort | uniq -c | sort -rn | head -10)
+    # Get unique IPs that received NEW bans on date
+    local new_banned_ips=$(grep "^$date" "$BAN_DB" | grep "|ban|" | cut -d'|' -f2 | sort -u)
+    local new_banned_count=$(echo "$new_banned_ips" | grep -c . 2>/dev/null || echo 0)
+    
+    # Get CURRENTLY ACTIVE bans (banned but not unbanned or banned after last unban)
+    local active_bans=""
+    local active_first=0
+    local active_second=0
+    local active_third=0
+    local active_ips=""
+    
+    # Get all unique IPs from database
+    local all_ips=$(tail -n +2 "$BAN_DB" | cut -d'|' -f2 | sort -u)
+    
+    while read -r ip; do
+        [[ -z "$ip" ]] && continue
+        
+        # Check each jail for this IP
+        for jail in postfix-sasl-first postfix-sasl-second postfix-sasl-third; do
+            local strike_level
+            case "$jail" in
+                postfix-sasl-first) strike_level=1 ;;
+                postfix-sasl-second) strike_level=2 ;;
+                postfix-sasl-third) strike_level=3 ;;
+            esac
+            
+            # Get last ban and unban for this IP/jail combo
+            local last_ban=$(grep "|$ip|$jail|ban|" "$BAN_DB" | tail -1)
+            local last_unban=$(grep "|$ip|$jail|unban|" "$BAN_DB" | tail -1)
+            
+            if [[ -n "$last_ban" ]]; then
+                local ban_time=$(echo "$last_ban" | cut -d'|' -f1)
+                
+                if [[ -n "$last_unban" ]]; then
+                    local unban_time=$(echo "$last_unban" | cut -d'|' -f1)
+                    # If ban is after unban, IP is currently banned in this jail
+                    if [[ "$ban_time" > "$unban_time" ]]; then
+                        case $strike_level in
+                            1) ((active_first++)) ;;
+                            2) ((active_second++)) ;;
+                            3) ((active_third++)) ;;
+                        esac
+                        active_ips="${active_ips}${ip}:${strike_level}\n"
+                    fi
+                else
+                    # No unban record means IP is still banned
+                    case $strike_level in
+                        1) ((active_first++)) ;;
+                        2) ((active_second++)) ;;
+                        3) ((active_third++)) ;;
+                    esac
+                    active_ips="${active_ips}${ip}:${strike_level}\n"
+                fi
+            fi
+        done
+    done <<< "$all_ips"
+    
+    # Get unique actively banned IPs (taking highest strike level)
+    local unique_active_ips=$(echo -e "$active_ips" | cut -d':' -f1 | sort -u)
+    local active_count=$(echo "$unique_active_ips" | grep -c . 2>/dev/null || echo 0)
+    
+    # Get top offending IPs from last 7 days
+    local week_ago=$(date -d '7 days ago' '+%Y-%m-%d')
+    local top_ips=$(awk -F'|' -v start="$week_ago" '$1 >= start && $4 == "ban" {print $2}' "$BAN_DB" | \
+                    sort | uniq -c | sort -rn | head -10)
+    
+    # Format currently active bans by strike level
+    local active_by_strike=""
+    if [[ $active_count -gt 0 ]]; then
+        # Get IPs at each strike level (highest strike only per IP)
+        local strike3_ips=""
+        local strike2_ips=""
+        local strike1_ips=""
+        
+        while read -r ip; do
+            [[ -z "$ip" ]] && continue
+            # Find highest active strike for this IP
+            local highest_strike=0
+            for strike in 3 2 1; do
+                if echo -e "$active_ips" | grep -q "^${ip}:${strike}$"; then
+                    highest_strike=$strike
+                    break
+                fi
+            done
+            
+            case $highest_strike in
+                3) strike3_ips="${strike3_ips}  ${ip}\n" ;;
+                2) strike2_ips="${strike2_ips}  ${ip}\n" ;;
+                1) strike1_ips="${strike1_ips}  ${ip}\n" ;;
+            esac
+        done <<< "$unique_active_ips"
+        
+        active_by_strike="=== CURRENTLY ACTIVE BANS (from database):
+
+[STRIKE 3] Third Strike (32 days):
+$(if [[ -n "$strike3_ips" ]]; then echo -e "$strike3_ips" | head -n -1; else echo "  None"; fi)
+
+[STRIKE 2] Second Strike (8 days):
+$(if [[ -n "$strike2_ips" ]]; then echo -e "$strike2_ips" | head -n -1; else echo "  None"; fi)
+
+[STRIKE 1] First Strike (48 hours):
+$(if [[ -n "$strike1_ips" ]]; then echo -e "$strike1_ips" | head -n -1; else echo "  None"; fi)"
+    else
+        active_by_strike="=== CURRENTLY ACTIVE BANS:
+  No active bans in database"
+    fi
+    
+    # Get recent ban activity (last 24h)
+    local yesterday=$(date -d '24 hours ago' '+%Y-%m-%d %H:%M:%S')
+    local recent_bans=$(awk -F'|' -v date="$yesterday" '$1 > date && $4 == "ban"' "$BAN_DB" | tail -10)
     
     # Create summary content
     local summary_content="SASL Authentication Failure - Daily Summary
 Date: $date
 
-Ban Statistics:
-- First Strike Bans: $first_strike
-- Second Strike Bans: $second_strike  
-- Third Strike Bans: $third_strike
-- Unique IPs Banned: $unique_count
+=== FAIL2BAN STATUS: $f2b_status
 
-Top 10 Offending IPs:
-$top_ips
+=== NEW BANS TODAY:
+- First Strike Bans: $new_first_strike
+- Second Strike Bans: $new_second_strike  
+- Third Strike Bans: $new_third_strike
+- Unique IPs Banned Today: $new_banned_count
 
-Currently Active Bans:
-$(monitor-postfix-bans.sh 2>/dev/null | grep -A 100 "CURRENTLY BANNED IPs:" || echo "Unable to fetch current bans")
+=== CURRENTLY ACTIVE BANS (Total):
+- Active First Strike: $active_first
+- Active Second Strike: $active_second
+- Active Third Strike: $active_third
+- Total Unique IPs Currently Banned: $active_count
+
+=== TOP OFFENDING IPs (Last 7 Days):
+$(if [[ -n "$top_ips" ]]; then echo "$top_ips"; else echo "  No bans in last 7 days"; fi)
+
+$active_by_strike
+
+=== RECENT BAN ACTIVITY (Last 24h):
+$(if [[ -n "$recent_bans" ]]; then echo "$recent_bans" | while IFS='|' read -r ts ip jail action strike notified; do
+    printf "  %s | %-15s | Strike %s | %s\n" "$ts" "$ip" "$strike" "$jail"
+done; else echo "  No ban activity in last 24 hours"; fi)
 
 Database Location: $BAN_DB"
     
@@ -254,6 +378,14 @@ weekly_summary() {
     local email="$1"
     local end_date="${2:-$(date '+%Y-%m-%d')}"
     local start_date=$(date -d "$end_date -6 days" '+%Y-%m-%d')
+    
+    # Check if fail2ban is running
+    local f2b_status=""
+    if systemctl is-active fail2ban >/dev/null 2>&1; then
+        f2b_status="✓ Fail2ban is ACTIVE"
+    else
+        f2b_status="⚠️  WARNING: FAIL2BAN IS NOT RUNNING! No bans are being enforced!"
+    fi
     
     # Count events by strike level for the week
     local first_strike=0
@@ -286,6 +418,8 @@ weekly_summary() {
     # Create summary content
     local summary_content="SASL Authentication Failure - Weekly Summary
 Period: $start_date to $end_date
+
+=== FAIL2BAN STATUS: $f2b_status
 
 Weekly Ban Statistics:
 - First Strike Bans: $first_strike
