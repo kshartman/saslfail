@@ -2,26 +2,33 @@
 
 A progressive fail2ban protection system for Postfix mail servers that escalates ban duration for repeat SASL authentication attackers.
 
-## 🎯 How It Works
+## How It Works
 
 **Progressive Punishment System:**
-- 🥊 **Strike 1**: First SASL auth failure → **48 hours** ban
-- ⚡ **Strike 2**: Second offense → **8 days** ban  
-- 💀 **Strike 3**: Third offense → **32 days** ban
+- **Strike 1**: First SASL auth failure -> **48 hours** ban
+- **Strike 2**: Second offense -> **8 days** ban
+- **Strike 3**: Third+ offense -> **32 days** ban
 
-## 📦 What Gets Installed
+**v2 Architecture:**
+- Strike 1 jail detects SASL failures from mail.log
+- `ban-tracker.sh` records the offense and checks history
+- If IP has prior offenses, ban-tracker escalates to Strike 2 or 3
+- Strike 2/3 jails use dummy filters (bans only via API)
+- This prevents cascade bugs where all strikes fired simultaneously
+
+## What Gets Installed
 
 ### Configuration Files
 - `/etc/fail2ban/filter.d/postfix-sasl-strict.conf` - Main SASL failure detection
-- `/etc/fail2ban/filter.d/postfix-sasl-recidive.conf` - Second strike detection
-- `/etc/fail2ban/filter.d/postfix-sasl-recidive-third.conf` - Third strike detection
-- `/etc/fail2ban/jail.d/postfix-sasl-escalating.conf` - Three-tier jail system
+- `/etc/fail2ban/filter.d/postfix-sasl-dummy.conf` - Dummy filter for Strike 2/3 jails
+- `/etc/fail2ban/jail.d/postfix-sasl-escalating-tracker.conf` - Three-tier jail system
 
 ### Monitoring Tools
 - `/usr/local/bin/monitor-postfix-bans.sh` - Real-time ban status monitoring (run manually)
-- `/usr/local/bin/ban-tracker.sh` - Ban tracking and reporting system
+- `/usr/local/bin/ban-tracker.sh` - Ban tracking, escalation, and reporting system
+- `/usr/local/bin/generate-blacklist.sh` - Generate IP blacklists from repeat offenders
 
-### Ban Tracking System (when enabled)
+### Ban Tracking System
 - `/var/lib/saslfail/bans.db` - Persistent ban history database
 - `/var/lib/saslfail/notification_state` - Notification tracking
 - `/var/lib/saslfail/tracker.log` - Ban tracker log file
@@ -31,7 +38,7 @@ A progressive fail2ban protection system for Postfix mail servers that escalates
 - Configuration validation before deployment
 - Easy uninstall with restoration capability
 
-## 🚀 Quick Installation
+## Quick Installation
 
 ### Clone and Install
 ```bash
@@ -55,15 +62,15 @@ sudo ./install-postfix-escalating-bans.sh
 ```
 
 The installer will:
-1. ✅ Backup your existing fail2ban configuration
-2. ✅ Prompt for notification preferences (see below)
-3. ✅ Prompt for custom IP ranges to ignore (or inherit from DEFAULT)
-4. ✅ Install all required filters and jails
-5. ✅ Test the configuration
-6. ✅ Restart fail2ban
-7. ✅ Verify all jails are active
+1. Backup your existing fail2ban configuration
+2. Prompt for notification preferences (see below)
+3. Prompt for custom IP ranges to ignore (or inherit from DEFAULT)
+4. Install all required filters and jails
+5. Test the configuration
+6. Restart fail2ban
+7. Verify all jails are active
 
-## 📊 Monitoring Your System
+## Monitoring Your System
 
 ### Check Ban Status
 ```bash
@@ -85,7 +92,7 @@ sudo tail -f /var/log/fail2ban.log | grep "postfix-sasl"
 sudo journalctl -u postfix-ban-monitor
 ```
 
-## 🛠️ Management Commands
+## Management Commands
 
 ### View Current Bans
 ```bash
@@ -107,7 +114,7 @@ sudo fail2ban-client set postfix-sasl-second unbanip 1.2.3.4
 sudo fail2ban-client set postfix-sasl-third unbanip 1.2.3.4
 ```
 
-## 🔧 Configuration
+## Configuration
 
 ### Notification Options
 
@@ -159,6 +166,30 @@ ban-tracker.sh daily-summary admin@example.com
 ban-tracker.sh weekly-summary admin@example.com
 ```
 
+### Generating Blacklists
+
+Create permanent blacklists from repeat offenders for use with ipset or firewall rules:
+
+```bash
+# Plain IP list (5+ offenses) for ipset
+generate-blacklist.sh > /etc/ipset-blacklist/saslfail.list
+
+# CSV with offense breakdown
+generate-blacklist.sh --format csv
+
+# Markdown table for documentation
+generate-blacklist.sh --format md
+
+# Custom threshold (3+ offenses)
+generate-blacklist.sh --threshold 3
+
+# Help
+generate-blacklist.sh --help
+```
+
+Offense counts: Each database entry represents one offense. A typical pattern is:
+- 5 offenses = 1 Strike 1 + 1 Strike 2 + 3 Strike 3s (persistent attacker)
+
 ### IP Whitelist Configuration
 
 During installation, you can:
@@ -180,7 +211,7 @@ All jails protect these mail service ports:
 - **465** (SMTPS)
 - **587** (Submission)
 
-## 🚨 Troubleshooting
+## Troubleshooting
 
 ### Check Jail Status
 ```bash
@@ -193,19 +224,33 @@ sudo journalctl -u fail2ban -n 50
 
 ### Test Filters
 ```bash
-# Test main filter
+# Test main SASL filter
 sudo fail2ban-regex /var/log/mail.log /etc/fail2ban/filter.d/postfix-sasl-strict.conf
-
-# Test recidive filters
-sudo fail2ban-regex /var/log/fail2ban.log /etc/fail2ban/filter.d/postfix-sasl-recidive.conf
 ```
 
 ### Common Issues
 1. **No matches found**: Check log file paths in jail configuration
 2. **Jails not starting**: Verify filter syntax with `fail2ban-client -t`
-3. **No escalations**: Ensure recidive filters are monitoring fail2ban.log
+3. **No escalations**: Check ban-tracker.sh logs at `/var/lib/saslfail/tracker.log`
 
-## 🗑️ Uninstallation
+## Upgrading from v1
+
+If you have an existing v1 installation, run the upgrade script:
+
+```bash
+sudo ./upgrade-saslfail.sh
+```
+
+This will:
+1. Backup your current database
+2. Install the v2 dummy filter and jail config
+3. Update ban-tracker.sh with new escalation logic
+4. Fix historical database entries (removes duplicates from cascade bug)
+5. Mark database as version 2
+
+The upgrade is idempotent - running it multiple times is safe.
+
+## Uninstallation
 
 ```bash
 # From the cloned repository directory
@@ -218,7 +263,7 @@ The uninstaller will:
 - Clear all existing bans
 - Remove monitoring tools
 
-## 📈 Expected Results
+## Expected Results
 
 After installation, you'll see:
 - Immediate protection against SASL brute force attacks
@@ -227,7 +272,7 @@ After installation, you'll see:
 - Hourly monitoring reports
 - Significant reduction in authentication attempts
 
-## 🔒 Security Features
+## Security Features
 
 - **Whitelist Protection**: Automatically excludes local networks
 - **Multiple Log Sources**: Monitors mail.log, postfix.log, maillog
@@ -235,14 +280,14 @@ After installation, you'll see:
 - **Escalation Tracking**: Cross-references previous ban history
 - **Email Alerts**: Real-time notification of security events
 
-## 📝 Log Files
+## Log Files
 
 Key log locations:
 - `/var/log/fail2ban.log` - fail2ban activity and escalations
 - `/var/log/mail.log` - Postfix SASL authentication failures
 - `/var/log/syslog` - System messages and errors
 
-## 🤝 Support
+## Support
 
 For issues or questions:
 1. Check fail2ban logs: `sudo tail -f /var/log/fail2ban.log`
