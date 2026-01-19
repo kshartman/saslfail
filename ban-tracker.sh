@@ -36,79 +36,89 @@ get_strike_level() {
     esac
 }
 
+# Function to count previous offenses for an IP
+count_offenses() {
+    local ip="$1"
+    # Count unique offense entries (Strike 1, 2, or 3 bans - each represents one offense)
+    grep "|$ip|.*|ban|" "$BAN_DB" 2>/dev/null | wc -l
+}
+
 # Function to record a ban event
 record_ban() {
     local ip="$1"
     local jail="$2"
     local email="$3"
-    local action="ban"
-    local strike_level=$(get_strike_level "$jail")
     local current_time=$(date '+%Y-%m-%d %H:%M:%S')
     local epoch_time=$(date +%s)
-    
-    # Check for existing ban and whether it's been unbanned
-    local last_ban=$(grep "|$ip|$jail|ban|" "$BAN_DB" 2>/dev/null | tail -1)
+
+    # Only process Strike 1 detections (the actual SASL failure detector)
+    # Strike 2/3 jails have no filters - we populate them via escalation
+    if [[ "$jail" != "postfix-sasl-first" ]]; then
+        log_message "Ignoring non-Strike1 ban call: IP=$ip, Jail=$jail"
+        return
+    fi
+
+    # Check for recent ban to avoid duplicates from restarts
+    local last_ban=$(grep "|$ip|" "$BAN_DB" 2>/dev/null | grep "|ban|" | tail -1)
     if [[ -n "$last_ban" ]]; then
         local last_ban_time=$(echo "$last_ban" | cut -d'|' -f1)
-        
-        # Check if there's been an unban since the last ban
-        local last_unban=$(grep "|$ip|$jail|unban|" "$BAN_DB" 2>/dev/null | tail -1)
-        if [[ -n "$last_unban" ]]; then
-            local last_unban_time=$(echo "$last_unban" | cut -d'|' -f1)
-            # If unban is after last ban, this is a new offense
-            if [[ "$last_unban_time" > "$last_ban_time" ]]; then
-                log_message "New ban after unban: IP=$ip, Jail=$jail"
-            fi
-        else
-            # No unban found, check if this is a recent restore
-            local last_epoch=$(date -d "$last_ban_time" +%s 2>/dev/null || echo 0)
-            local time_diff=$((epoch_time - last_epoch))
-            
-            # If banned in same jail within 60 seconds without unban, likely a restore
-            if [[ $time_diff -lt 60 ]] && [[ $time_diff -ge 0 ]]; then
-                log_message "Skipping restore ban: IP=$ip, Jail=$jail (last ban $time_diff seconds ago)"
-                return
-            fi
+        local last_epoch=$(date -d "$last_ban_time" +%s 2>/dev/null || echo 0)
+        local time_diff=$((epoch_time - last_epoch))
+
+        # If banned within 60 seconds, likely a restore - skip
+        if [[ $time_diff -lt 60 ]] && [[ $time_diff -ge 0 ]]; then
+            log_message "Skipping restore ban: IP=$ip (last ban $time_diff seconds ago)"
+            return
         fi
     fi
-    
-    # Record in database
-    echo "$current_time|$ip|$jail|$action|$strike_level|0" >> "$BAN_DB"
-    log_message "Recorded ban: IP=$ip, Jail=$jail, Strike=$strike_level"
-    
-    # Update notification state
-    local state_entry=$(grep "^$ip|" "$NOTIFICATION_STATE" 2>/dev/null)
-    
-    if [[ -z "$state_entry" ]]; then
-        # First ban for this IP
-        echo "$ip|$epoch_time|$strike_level|0" >> "$NOTIFICATION_STATE"
-        log_message "First ban for $ip, starting 5-minute window"
-        
-        # If strike 3, send immediate notification
+
+    # Count previous offenses to determine strike level
+    local prev_offenses=$(count_offenses "$ip")
+    local offense_num=$((prev_offenses + 1))
+    local strike_level
+    local target_jail
+
+    if [[ $offense_num -eq 1 ]]; then
+        strike_level=1
+        target_jail="postfix-sasl-first"
+    elif [[ $offense_num -eq 2 ]]; then
+        strike_level=2
+        target_jail="postfix-sasl-second"
+    else
+        strike_level=3
+        target_jail="postfix-sasl-third"
+    fi
+
+    log_message "Offense #$offense_num for $ip → Strike $strike_level"
+
+    # Record in database (only the target strike level, no cascade)
+    echo "$current_time|$ip|$target_jail|ban|$strike_level|0" >> "$BAN_DB"
+    log_message "Recorded ban: IP=$ip, Strike=$strike_level"
+
+    # Escalate if needed (move to higher strike jail)
+    if [[ $strike_level -gt 1 ]]; then
+        # Add to target jail
+        fail2ban-client set "$target_jail" banip "$ip" 2>/dev/null
+        log_message "Escalated $ip to $target_jail"
+
+        # Remove from Strike 1 jail (they're now in a higher jail)
+        fail2ban-client set postfix-sasl-first unbanip "$ip" 2>/dev/null
+        log_message "Removed $ip from postfix-sasl-first"
+    fi
+
+    # Handle notifications
+    if [[ -n "$email" ]] && [[ "$email" != "none" ]]; then
         if [[ $strike_level -eq 3 ]]; then
             send_notification "$ip" "$strike_level" "$email" "immediate"
-            sed -i "s/^$ip|.*|0$/$ip|$epoch_time|$strike_level|1/" "$NOTIFICATION_STATE"
-        fi
-    else
-        # Update existing entry
-        local first_ban_time=$(echo "$state_entry" | cut -d'|' -f2)
-        local last_strike=$(echo "$state_entry" | cut -d'|' -f3)
-        local notif_sent=$(echo "$state_entry" | cut -d'|' -f4)
-        
-        # Update strike level
-        sed -i "s/^$ip|$first_ban_time|$last_strike|/$ip|$first_ban_time|$strike_level|/" "$NOTIFICATION_STATE"
-        
-        # Check if we should send notification
-        local time_diff=$((epoch_time - first_ban_time))
-        
-        if [[ $strike_level -eq 3 ]] && [[ $notif_sent -eq 0 ]]; then
-            # Strike 3 reached, send notification
-            send_notification "$ip" "$strike_level" "$email" "escalated"
-            sed -i "s/^$ip|.*|0$/$ip|$first_ban_time|$strike_level|1/" "$NOTIFICATION_STATE"
-        elif [[ $time_diff -ge 300 ]] && [[ $notif_sent -eq 0 ]]; then
-            # 5 minutes passed, send notification for current level
-            send_notification "$ip" "$strike_level" "$email" "delayed"
-            sed -i "s/^$ip|.*|0$/$ip|$first_ban_time|$strike_level|1/" "$NOTIFICATION_STATE"
+        else
+            # Update notification state for delayed notification
+            local state_entry=$(grep "^$ip|" "$NOTIFICATION_STATE" 2>/dev/null)
+            if [[ -z "$state_entry" ]]; then
+                echo "$ip|$epoch_time|$strike_level|0" >> "$NOTIFICATION_STATE"
+            else
+                local first_ban_time=$(echo "$state_entry" | cut -d'|' -f2)
+                sed -i "s/^$ip|.*/$ip|$first_ban_time|$strike_level|0/" "$NOTIFICATION_STATE"
+            fi
         fi
     fi
 }

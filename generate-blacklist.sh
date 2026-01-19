@@ -1,6 +1,7 @@
 #!/bin/bash
 # Generate blacklist of repeat offenders from saslfail ban database
-# Outputs sorted IP list, CSV, or Markdown with strike breakdown
+# Outputs sorted IP list, CSV, or Markdown with offense/strike breakdown
+# In v2, each offense = one database entry at the appropriate strike level
 
 BAN_DB="/var/lib/saslfail/bans.db"
 
@@ -8,21 +9,23 @@ usage() {
     cat << EOF
 Usage: $(basename "$0") [OPTIONS]
 
-Generate a blacklist of IPs that have been banned multiple times.
+Generate a blacklist of IPs that have offended multiple times.
 
 Options:
-  --threshold N       Minimum total bans to include (default: 10)
+  --threshold N       Minimum offenses to include (default: 5)
   --format [TYPE]     Output format: list, csv, md (default: csv if flag present, list if absent)
   -h, --help          Show this help message
 
 Output Formats:
   list    Plain IP list sorted numerically (for ipset/firewall)
-  csv     CSV with ip,total,strike3,strike2,strike1 (sorted by total desc)
-  md      Markdown table with strike breakdown (sorted by total desc)
+  csv     CSV with ip,offenses,strike3,strike2,strike1 (sorted by offenses desc)
+  md      Markdown table with strike breakdown (sorted by offenses desc)
+
+Note: 5 offenses = 1 Strike1 + 1 Strike2 + 3 Strike3s (persistent attacker)
 
 Examples:
-  $(basename "$0")                        # Plain IP list with 10+ bans
-  $(basename "$0") --threshold 5          # Plain IP list with 5+ bans
+  $(basename "$0")                        # Plain IP list with 5+ offenses
+  $(basename "$0") --threshold 3          # IPs with 3+ offenses
   $(basename "$0") --format               # CSV output (default when --format used)
   $(basename "$0") --format csv           # CSV output (explicit)
   $(basename "$0") --format md            # Markdown table
@@ -32,7 +35,7 @@ EOF
 }
 
 # Defaults
-THRESHOLD=10
+THRESHOLD=5
 FORMAT="list"
 
 # Parse arguments
@@ -97,8 +100,8 @@ case "$FORMAT" in
         ' "$BAN_DB" | sort -t. -k1,1n -k2,2n -k3,3n -k4,4n
         ;;
     csv)
-        # Output CSV with strike breakdown, sorted by total descending
-        echo "ip,total,strike3,strike2,strike1"
+        # Output CSV with strike breakdown, sorted by offenses descending
+        echo "ip,offenses,strike3,strike2,strike1"
         awk -F'|' '
         NR > 1 && $4 == "ban" {
             ip = $2
@@ -118,9 +121,9 @@ case "$FORMAT" in
         ' "$BAN_DB" | sort -t',' -k2 -rn
         ;;
     md)
-        # Output Markdown table with strike breakdown, sorted by total descending
-        echo "| IP | Total | Strike 3 | Strike 2 | Strike 1 |"
-        echo "|-----|-------|----------|----------|----------|"
+        # Output Markdown table with strike breakdown, sorted by offenses descending
+        echo "| IP | Offenses | Strike 3 | Strike 2 | Strike 1 |"
+        echo "|-----|----------|----------|----------|----------|"
         awk -F'|' '
         NR > 1 && $4 == "ban" {
             ip = $2
