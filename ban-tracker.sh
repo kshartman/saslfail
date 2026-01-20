@@ -681,12 +681,10 @@ report_summary() {
     if [[ "$HAS_SQLITE" == "true" ]]; then
         echo
         echo "Fail2Ban Database Statistics:"
-        local f2b_active=$(sqlite3 "$F2B_DB" "SELECT COUNT(*) FROM bips WHERE datetime(timeofban+bantime,'unixepoch','localtime') > datetime('now','localtime');")
-        local f2b_total=$(sqlite3 "$F2B_DB" "SELECT COUNT(*) FROM bips;")
-        local f2b_jails=$(sqlite3 "$F2B_DB" "SELECT COUNT(DISTINCT jail) FROM bips WHERE datetime(timeofban+bantime,'unixepoch','localtime') > datetime('now','localtime');")
+        local f2b_active=$(sqlite3 "$F2B_DB" "SELECT COUNT(*) FROM bips WHERE jail LIKE 'postfix-sasl%' AND datetime(timeofban+bantime,'unixepoch','localtime') > datetime('now','localtime');")
+        local f2b_total=$(sqlite3 "$F2B_DB" "SELECT COUNT(*) FROM bips WHERE jail LIKE 'postfix-sasl%';")
         echo "  Currently banned IPs: $f2b_active"
         echo "  Total persistent bans: $f2b_total"
-        echo "  Active jails with bans: $f2b_jails"
     fi
 }
 
