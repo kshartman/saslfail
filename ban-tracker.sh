@@ -39,8 +39,8 @@ get_strike_level() {
 # Function to count previous offenses for an IP
 count_offenses() {
     local ip="$1"
-    # Count unique offense entries (Strike 1, 2, or 3 bans - each represents one offense)
-    grep "|$ip|.*|ban|" "$BAN_DB" 2>/dev/null | wc -l
+    # Count real ban entries only (exclude restore-ban)
+    grep "|$ip|.*|ban|" "$BAN_DB" 2>/dev/null | grep -v "|restore-ban|" | wc -l
 }
 
 # Function to record a ban event
@@ -58,16 +58,19 @@ record_ban() {
         return
     fi
 
-    # Check for recent ban to avoid duplicates from restarts
-    local last_ban=$(grep "|$ip|" "$BAN_DB" 2>/dev/null | grep "|ban|" | tail -1)
+    # Check if there's an unexpired ban (indicates restart/restore)
+    local last_ban=$(grep "|$ip|.*|ban|" "$BAN_DB" 2>/dev/null | tail -1)
     if [[ -n "$last_ban" ]]; then
         local last_ban_time=$(echo "$last_ban" | cut -d'|' -f1)
+        local last_strike=$(echo "$last_ban" | cut -d'|' -f5)
         local last_epoch=$(date -d "$last_ban_time" +%s 2>/dev/null || echo 0)
-        local time_diff=$((epoch_time - last_epoch))
+        local time_since_ban=$((epoch_time - last_epoch))
+        local ban_duration=$(get_ban_duration "$last_strike")
 
-        # If banned within 60 seconds, likely a restore - skip
-        if [[ $time_diff -lt 60 ]] && [[ $time_diff -ge 0 ]]; then
-            log_message "Skipping restore ban: IP=$ip (last ban $time_diff seconds ago)"
+        # If previous ban hasn't expired, this is a restore
+        if [[ $time_since_ban -lt $ban_duration ]]; then
+            echo "$current_time|$ip|$jail|restore-ban|1|0" >> "$BAN_DB"
+            log_message "Recorded restore-ban: IP=$ip (previous Strike $last_strike ban still active)"
             return
         fi
     fi
@@ -123,19 +126,50 @@ record_ban() {
     fi
 }
 
+# Function to get ban duration in seconds for a strike level
+get_ban_duration() {
+    local strike="$1"
+    case $strike in
+        1) echo 172800 ;;   # 48 hours
+        2) echo 691200 ;;   # 8 days
+        3) echo 2764800 ;;  # 32 days
+        *) echo 172800 ;;
+    esac
+}
+
 # Function to record an unban event
 record_unban() {
     local ip="$1"
     local jail="$2"
     local current_time=$(date '+%Y-%m-%d %H:%M:%S')
+    local epoch_time=$(date +%s)
     local strike_level=$(get_strike_level "$jail")
-    
+    local ban_duration=$(get_ban_duration "$strike_level")
+
+    # Find the last ban for this IP+jail
+    local last_ban=$(grep "|$ip|$jail|ban|" "$BAN_DB" 2>/dev/null | tail -1)
+    local action="unban"
+
+    if [[ -n "$last_ban" ]]; then
+        local last_ban_time=$(echo "$last_ban" | cut -d'|' -f1)
+        local last_epoch=$(date -d "$last_ban_time" +%s 2>/dev/null || echo 0)
+        local time_since_ban=$((epoch_time - last_epoch))
+
+        # If ban duration hasn't elapsed, this is a restart unban
+        if [[ $time_since_ban -lt $ban_duration ]]; then
+            action="restore-unban"
+            log_message "Restart unban: IP=$ip, Strike=$strike_level (${time_since_ban}s < ${ban_duration}s)"
+        fi
+    fi
+
     # Record in database
-    echo "$current_time|$ip|$jail|unban|$strike_level|0" >> "$BAN_DB"
-    log_message "Recorded unban: IP=$ip, Jail=$jail, Strike=$strike_level"
-    
-    # Remove from notification state since IP is unbanned
-    sed -i "/^$ip|/d" "$NOTIFICATION_STATE"
+    echo "$current_time|$ip|$jail|$action|$strike_level|0" >> "$BAN_DB"
+    log_message "Recorded $action: IP=$ip, Jail=$jail, Strike=$strike_level"
+
+    # Only clear notification state on real unbans
+    if [[ "$action" == "unban" ]]; then
+        sed -i "/^$ip|/d" "$NOTIFICATION_STATE"
+    fi
 }
 
 # Function to send notification
@@ -618,19 +652,23 @@ report_summary() {
     echo "=== Ban Tracking Statistics ==="
     echo
     echo "Database: $BAN_DB"
-    echo "Total recorded bans: $(tail -n +2 "$BAN_DB" | grep "|ban|" | wc -l)"
-    echo "Total recorded unbans: $(tail -n +2 "$BAN_DB" | grep "|unban|" | wc -l)"
+    echo "Total recorded bans: $(grep "|ban|" "$BAN_DB" | grep -v "|restore-ban|" | wc -l)"
+    echo "Total recorded unbans: $(grep "|unban|" "$BAN_DB" | grep -v "|restore-unban|" | wc -l)"
     echo "Unique IPs: $(tail -n +2 "$BAN_DB" | cut -d'|' -f2 | sort -u | wc -l)"
     echo
     echo "Bans by strike level:"
-    echo "  Strike 1: $(grep "|ban|1|" "$BAN_DB" | wc -l)"
-    echo "  Strike 2: $(grep "|ban|2|" "$BAN_DB" | wc -l)"
-    echo "  Strike 3: $(grep "|ban|3|" "$BAN_DB" | wc -l)"
+    echo "  Strike 1: $(grep "|ban|1|" "$BAN_DB" | grep -v "|restore-ban|" | wc -l)"
+    echo "  Strike 2: $(grep "|ban|2|" "$BAN_DB" | grep -v "|restore-ban|" | wc -l)"
+    echo "  Strike 3: $(grep "|ban|3|" "$BAN_DB" | grep -v "|restore-ban|" | wc -l)"
     echo
     echo "Unbans by strike level:"
-    echo "  Strike 1: $(grep "|unban|1|" "$BAN_DB" | wc -l)"
-    echo "  Strike 2: $(grep "|unban|2|" "$BAN_DB" | wc -l)"
-    echo "  Strike 3: $(grep "|unban|3|" "$BAN_DB" | wc -l)"
+    echo "  Strike 1: $(grep "|unban|1|" "$BAN_DB" | grep -v "|restore-unban|" | wc -l)"
+    echo "  Strike 2: $(grep "|unban|2|" "$BAN_DB" | grep -v "|restore-unban|" | wc -l)"
+    echo "  Strike 3: $(grep "|unban|3|" "$BAN_DB" | grep -v "|restore-unban|" | wc -l)"
+    echo
+    echo "Restart events (excluded from counts above):"
+    echo "  Restore-bans: $(grep "|restore-ban|" "$BAN_DB" | wc -l)"
+    echo "  Restore-unbans: $(grep "|restore-unban|" "$BAN_DB" | wc -l)"
     echo
     echo "Recent activity (last 24h):"
     local yesterday=$(date -d '24 hours ago' '+%Y-%m-%d %H:%M:%S')

@@ -39,6 +39,7 @@ This script:
    - Offense #2 → Strike 2
    - Offense #3+ → Strike 3
 4. Removes orphaned unbans (unbans with no matching ban for IP+strike)
+5. Tags early unbans as restore-unban (restart events, not real expirations)
 
 The script is idempotent - it tracks database version and only runs once.
 Version 1 (or missing) = unfixed, Version 2 = fixed.
@@ -215,17 +216,39 @@ while read -r ip; do
             fi
         done
 
-        # Keep only unbans that have a matching ban for this IP+strike
-        # (Don't keep all - v1 bug created orphaned Strike 2/3 unbans)
+        # Keep only unbans that have a matching ban, and tag as restore-unban if early
+        # Ban durations: Strike 1=48h, Strike 2=8d, Strike 3=32d
+        declare -A ban_durations=([1]=172800 [2]=691200 [3]=2764800)
+
         for strike in 1 2 3; do
             case $strike in
                 1) jail="postfix-sasl-first" ;;
                 2) jail="postfix-sasl-second" ;;
                 3) jail="postfix-sasl-third" ;;
             esac
-            # Only keep unbans if we wrote a ban for this strike level
-            if grep -q "|$ip|$jail|ban|" "$TEMP_DB" 2>/dev/null; then
-                echo "$ip_entries" | grep "|$jail|unban|" >> "$TEMP_DB"
+
+            # Only process unbans if we wrote a ban for this strike level
+            ban_line=$(grep "|$ip|$jail|ban|" "$TEMP_DB" 2>/dev/null | tail -1)
+            if [[ -n "$ban_line" ]]; then
+                ban_ts_check=$(echo "$ban_line" | cut -d"|" -f1)
+                ban_epoch_check=$(date -d "$ban_ts_check" +%s 2>/dev/null || echo 0)
+                duration=${ban_durations[$strike]}
+
+                # Process each unban for this IP+jail
+                echo "$ip_entries" | grep "|$jail|unban|" | while read -r uline; do
+                    [[ -z "$uline" ]] && continue
+                    u_ts=$(echo "$uline" | cut -d"|" -f1)
+                    u_epoch=$(date -d "$u_ts" +%s 2>/dev/null || echo 0)
+                    u_notified=$(echo "$uline" | cut -d"|" -f6)
+                    time_since_ban=$((u_epoch - ban_epoch_check))
+
+                    # Tag as restore-unban if it occurred before ban expired
+                    if [[ $time_since_ban -lt $duration ]] && [[ $time_since_ban -ge 0 ]]; then
+                        echo "$u_ts|$ip|$jail|restore-unban|$strike|$u_notified" >> "$TEMP_DB"
+                    elif [[ $u_epoch -gt $ban_epoch_check ]]; then
+                        echo "$u_ts|$ip|$jail|unban|$strike|$u_notified" >> "$TEMP_DB"
+                    fi
+                done
             fi
         done
     fi
@@ -239,8 +262,9 @@ echo "Real offenses found: $total_real_offenses"
 echo "Ban entries: $total_before_entries -> $total_after_entries"
 total_before_unbans=$(grep -c "|unban|" "$BAN_DB" 2>/dev/null || echo 0)
 if [[ "$DRY_RUN" == "false" ]]; then
-    total_after_unbans=$(grep -c "|unban|" "$TEMP_DB" 2>/dev/null || echo 0)
-    echo "Unban entries: $total_before_unbans -> $total_after_unbans"
+    total_after_unbans=$(grep "|unban|" "$TEMP_DB" 2>/dev/null | grep -cv "|restore-unban|" || echo 0)
+    total_restore_unbans=$(grep -c "|restore-unban|" "$TEMP_DB" 2>/dev/null || echo 0)
+    echo "Unban entries: $total_before_unbans -> $total_after_unbans real + $total_restore_unbans restore"
 fi
 echo
 
