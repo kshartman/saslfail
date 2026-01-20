@@ -38,6 +38,7 @@ This script:
    - Offense #1 → Strike 1
    - Offense #2 → Strike 2
    - Offense #3+ → Strike 3
+4. Removes orphaned unbans (unbans with no matching ban for IP+strike)
 
 The script is idempotent - it tracks database version and only runs once.
 Version 1 (or missing) = unfixed, Version 2 = fixed.
@@ -119,6 +120,8 @@ total_ips=0
 total_before_entries=0
 total_after_entries=0
 total_real_offenses=0
+total_before_unbans=0
+total_after_unbans=0
 
 echo "=== Processing IPs ==="
 echo
@@ -212,8 +215,19 @@ while read -r ip; do
             fi
         done
 
-        # Keep all unban entries (useful for history)
-        echo "$ip_entries" | grep "|unban|" >> "$TEMP_DB"
+        # Keep only unbans that have a matching ban for this IP+strike
+        # (Don't keep all - v1 bug created orphaned Strike 2/3 unbans)
+        for strike in 1 2 3; do
+            case $strike in
+                1) jail="postfix-sasl-first" ;;
+                2) jail="postfix-sasl-second" ;;
+                3) jail="postfix-sasl-third" ;;
+            esac
+            # Only keep unbans if we wrote a ban for this strike level
+            if grep -q "|$ip|$jail|ban|" "$TEMP_DB" 2>/dev/null; then
+                echo "$ip_entries" | grep "|$jail|unban|" >> "$TEMP_DB"
+            fi
+        done
     fi
 
 done <<< "$IPS"
@@ -222,7 +236,12 @@ echo
 echo "=== Summary ==="
 echo "IPs processed: $total_ips"
 echo "Real offenses found: $total_real_offenses"
-echo "Ban entries: $total_before_entries → $total_after_entries"
+echo "Ban entries: $total_before_entries -> $total_after_entries"
+total_before_unbans=$(grep -c "|unban|" "$BAN_DB" 2>/dev/null || echo 0)
+if [[ "$DRY_RUN" == "false" ]]; then
+    total_after_unbans=$(grep -c "|unban|" "$TEMP_DB" 2>/dev/null || echo 0)
+    echo "Unban entries: $total_before_unbans -> $total_after_unbans"
+fi
 echo
 
 if [[ "$DRY_RUN" == "true" ]]; then
