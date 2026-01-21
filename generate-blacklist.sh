@@ -1,7 +1,7 @@
 #!/bin/bash
 # Generate blacklist of repeat offenders from saslfail ban database
 # Outputs sorted IP list, CSV, or Markdown with offense/strike breakdown
-# In v2, each offense = one database entry at the appropriate strike level
+# Threshold is based on Strike 3 count (persistent attackers)
 
 BAN_DB="/var/lib/saslfail/bans.db"
 
@@ -9,23 +9,23 @@ usage() {
     cat << EOF
 Usage: $(basename "$0") [OPTIONS]
 
-Generate a blacklist of IPs that have offended multiple times.
+Generate a blacklist of IPs that have reached Strike 3 multiple times.
 
 Options:
-  --threshold N       Minimum offenses to include (default: 5)
+  --threshold N       Minimum Strike 3 bans to include (default: 3)
   --format [TYPE]     Output format: list, csv, md (default: csv if flag present, list if absent)
   -h, --help          Show this help message
 
 Output Formats:
   list    Plain IP list sorted numerically (for ipset/firewall)
-  csv     CSV with ip,offenses,strike3,strike2,strike1 (sorted by offenses desc)
-  md      Markdown table with strike breakdown (sorted by offenses desc)
+  csv     CSV with ip,strike3,strike2,strike1,total (sorted by strike3 desc)
+  md      Markdown table with strike breakdown (sorted by strike3 desc)
 
-Note: 5 offenses = 1 Strike1 + 1 Strike2 + 3 Strike3s (persistent attacker)
+Note: Each Strike 3 = 32-day ban. IPs reaching Strike 3 multiple times are persistent attackers.
 
 Examples:
-  $(basename "$0")                        # Plain IP list with 5+ offenses
-  $(basename "$0") --threshold 3          # IPs with 3+ offenses
+  $(basename "$0")                        # Plain IP list with 3+ Strike 3 bans
+  $(basename "$0") --threshold 5          # IPs with 5+ Strike 3 bans
   $(basename "$0") --format               # CSV output (default when --format used)
   $(basename "$0") --format csv           # CSV output (explicit)
   $(basename "$0") --format md            # Markdown table
@@ -35,7 +35,7 @@ EOF
 }
 
 # Defaults
-THRESHOLD=5
+THRESHOLD=3
 FORMAT="list"
 
 # Parse arguments
@@ -85,14 +85,14 @@ fi
 
 case "$FORMAT" in
     list)
-        # Output sorted IP list only
+        # Output sorted IP list only (filtered by Strike 3 count)
         awk -F'|' '
-        NR > 1 && $4 == "ban" {
-            total[$2]++
+        NR > 1 && $4 == "ban" && $5 == 3 {
+            s3[$2]++
         }
         END {
-            for (ip in total) {
-                if (total[ip] >= '"$THRESHOLD"') {
+            for (ip in s3) {
+                if (s3[ip] >= '"$THRESHOLD"') {
                     print ip
                 }
             }
@@ -100,8 +100,8 @@ case "$FORMAT" in
         ' "$BAN_DB" | sort -t. -k1,1n -k2,2n -k3,3n -k4,4n
         ;;
     csv)
-        # Output CSV with strike breakdown, sorted by offenses descending
-        echo "ip,offenses,strike3,strike2,strike1"
+        # Output CSV with strike breakdown, sorted by Strike 3 count descending
+        echo "ip,strike3,strike2,strike1,total"
         awk -F'|' '
         NR > 1 && $4 == "ban" {
             ip = $2
@@ -112,18 +112,18 @@ case "$FORMAT" in
             else if (strike == 1) s1[ip]++
         }
         END {
-            for (ip in total) {
-                if (total[ip] >= '"$THRESHOLD"') {
-                    printf "%s,%d,%d,%d,%d\n", ip, total[ip], s3[ip]+0, s2[ip]+0, s1[ip]+0
+            for (ip in s3) {
+                if (s3[ip] >= '"$THRESHOLD"') {
+                    printf "%s,%d,%d,%d,%d\n", ip, s3[ip]+0, s2[ip]+0, s1[ip]+0, total[ip]
                 }
             }
         }
         ' "$BAN_DB" | sort -t',' -k2 -rn
         ;;
     md)
-        # Output Markdown table with strike breakdown, sorted by offenses descending
-        echo "| IP | Offenses | Strike 3 | Strike 2 | Strike 1 |"
-        echo "|-----|----------|----------|----------|----------|"
+        # Output Markdown table with strike breakdown, sorted by Strike 3 count descending
+        echo "| IP | Strike 3 | Strike 2 | Strike 1 | Total |"
+        echo "|-----|----------|----------|----------|-------|"
         awk -F'|' '
         NR > 1 && $4 == "ban" {
             ip = $2
@@ -134,9 +134,9 @@ case "$FORMAT" in
             else if (strike == 1) s1[ip]++
         }
         END {
-            for (ip in total) {
-                if (total[ip] >= '"$THRESHOLD"') {
-                    printf "%s,%d,%d,%d,%d\n", ip, total[ip], s3[ip]+0, s2[ip]+0, s1[ip]+0
+            for (ip in s3) {
+                if (s3[ip] >= '"$THRESHOLD"') {
+                    printf "%s,%d,%d,%d,%d\n", ip, s3[ip]+0, s2[ip]+0, s1[ip]+0, total[ip]
                 }
             }
         }
