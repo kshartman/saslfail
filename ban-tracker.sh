@@ -257,13 +257,13 @@ daily_summary() {
         f2b_status="⚠️  WARNING: FAIL2BAN IS NOT RUNNING! No bans are being enforced!"
     fi
     
-    # Count NEW bans that occurred on specified date
-    local new_first_strike=$(grep "^$date" "$BAN_DB" | grep "|ban|1|" | wc -l)
-    local new_second_strike=$(grep "^$date" "$BAN_DB" | grep "|ban|2|" | wc -l)
-    local new_third_strike=$(grep "^$date" "$BAN_DB" | grep "|ban|3|" | wc -l)
-    
-    # Get unique IPs that received NEW bans on date
-    local new_banned_ips=$(grep "^$date" "$BAN_DB" | grep "|ban|" | cut -d'|' -f2 | sort -u)
+    # Count NEW bans that occurred on specified date (exclude restore-ban)
+    local new_first_strike=$(grep "^$date" "$BAN_DB" | grep "|ban|1|" | grep -cv "|restore-ban|")
+    local new_second_strike=$(grep "^$date" "$BAN_DB" | grep "|ban|2|" | grep -cv "|restore-ban|")
+    local new_third_strike=$(grep "^$date" "$BAN_DB" | grep "|ban|3|" | grep -cv "|restore-ban|")
+
+    # Get unique IPs that received NEW bans on date (exclude restore-ban)
+    local new_banned_ips=$(grep "^$date" "$BAN_DB" | grep "|ban|" | grep -v "|restore-ban|" | cut -d'|' -f2 | sort -u)
     local new_banned_count=$(echo "$new_banned_ips" | grep -c . 2>/dev/null || echo 0)
     
     # Get CURRENTLY ACTIVE bans (banned but not unbanned or banned after last unban)
@@ -288,9 +288,9 @@ daily_summary() {
                 postfix-sasl-third) strike_level=3 ;;
             esac
             
-            # Get last ban and unban for this IP/jail combo
-            local last_ban=$(grep "|$ip|$jail|ban|" "$BAN_DB" | tail -1)
-            local last_unban=$(grep "|$ip|$jail|unban|" "$BAN_DB" | tail -1)
+            # Get last real ban and unban for this IP/jail combo (exclude restore events)
+            local last_ban=$(grep "|$ip|$jail|ban|" "$BAN_DB" | grep -v "|restore-ban|" | tail -1)
+            local last_unban=$(grep "|$ip|$jail|unban|" "$BAN_DB" | grep -v "|restore-unban|" | tail -1)
             
             if [[ -n "$last_ban" ]]; then
                 local ban_time=$(echo "$last_ban" | cut -d'|' -f1)
@@ -323,9 +323,9 @@ daily_summary() {
     local unique_active_ips=$(echo -e "$active_ips" | cut -d':' -f1 | sort -u)
     local active_count=$(echo "$unique_active_ips" | grep -c . 2>/dev/null || echo 0)
     
-    # Get top offending IPs from last 7 days
+    # Get top offending IPs from last 7 days (exclude restore-ban)
     local week_ago=$(date -d '7 days ago' '+%Y-%m-%d')
-    local top_ips=$(awk -F'|' -v start="$week_ago" '$1 >= start && $4 == "ban" {print $2}' "$BAN_DB" | \
+    local top_ips=$(grep -v "|restore-ban|" "$BAN_DB" | awk -F'|' -v start="$week_ago" '$1 >= start && $4 == "ban" {print $2}' | \
                     sort | uniq -c | sort -rn | head -10)
     
     # Format currently active bans by strike level
@@ -369,9 +369,9 @@ $(if [[ -n "$strike1_ips" ]]; then echo -e "$strike1_ips" | head -n -1; else ech
   No active bans in database"
     fi
     
-    # Get recent ban activity (last 24h)
+    # Get recent ban activity (last 24h, exclude restore-ban)
     local yesterday=$(date -d '24 hours ago' '+%Y-%m-%d %H:%M:%S')
-    local recent_bans=$(awk -F'|' -v date="$yesterday" '$1 > date && $4 == "ban"' "$BAN_DB" | tail -10)
+    local recent_bans=$(grep -v "|restore-ban|" "$BAN_DB" | awk -F'|' -v date="$yesterday" '$1 > date && $4 == "ban"' | tail -10)
     
     # Create summary content
     local summary_content="SASL Authentication Failure - Daily Summary
@@ -439,25 +439,25 @@ weekly_summary() {
     
     for i in {6..0}; do
         local check_date=$(date -d "$end_date -$i days" '+%Y-%m-%d')
-        local day_first=$(grep "^$check_date" "$BAN_DB" | grep "|1|" | wc -l)
-        local day_second=$(grep "^$check_date" "$BAN_DB" | grep "|2|" | wc -l)
-        local day_third=$(grep "^$check_date" "$BAN_DB" | grep "|3|" | wc -l)
-        
+        local day_first=$(grep "^$check_date" "$BAN_DB" | grep "|ban|1|" | grep -cv "|restore-ban|")
+        local day_second=$(grep "^$check_date" "$BAN_DB" | grep "|ban|2|" | grep -cv "|restore-ban|")
+        local day_third=$(grep "^$check_date" "$BAN_DB" | grep "|ban|3|" | grep -cv "|restore-ban|")
+
         first_strike=$((first_strike + day_first))
         second_strike=$((second_strike + day_second))
         third_strike=$((third_strike + day_third))
-        
+
         daily_stats="${daily_stats}$check_date: Strike1=$day_first, Strike2=$day_second, Strike3=$day_third\n"
     done
-    
-    # Get unique IPs banned during the week
-    local unique_ips=$(awk -F'|' -v start="$start_date" -v end="$end_date 23:59:59" \
-        '$1 >= start && $1 <= end {print $2}' "$BAN_DB" | sort -u)
-    local unique_count=$(echo "$unique_ips" | grep -c .)
-    
-    # Get top offending IPs for the week
-    local top_ips=$(awk -F'|' -v start="$start_date" -v end="$end_date 23:59:59" \
-        '$1 >= start && $1 <= end {print $2}' "$BAN_DB" | sort | uniq -c | sort -rn | head -20)
+
+    # Get unique IPs banned during the week (exclude restore-ban)
+    local unique_ips=$(grep -v "|restore-ban|" "$BAN_DB" | awk -F'|' -v start="$start_date" -v end="$end_date 23:59:59" \
+        '$1 >= start && $1 <= end && $4 == "ban" {print $2}' | sort -u)
+    local unique_count=$(echo "$unique_ips" | grep -c . 2>/dev/null || echo 0)
+
+    # Get top offending IPs for the week (exclude restore-ban)
+    local top_ips=$(grep -v "|restore-ban|" "$BAN_DB" | awk -F'|' -v start="$start_date" -v end="$end_date 23:59:59" \
+        '$1 >= start && $1 <= end && $4 == "ban" {print $2}' | sort | uniq -c | sort -rn | head -20)
     
     # Create summary content
     local summary_content="SASL Authentication Failure - Weekly Summary
@@ -719,10 +719,11 @@ COMMANDS:
         Show active bans from fail2ban SQLite database (if available)
         Shows authoritative ban data directly from fail2ban
         
-    daily-summary [email] [date]
+    daily-summary [--yesterday] [email] [date]
         Generate daily summary report
         - If no email: outputs to console
         - If no date: uses today
+        - Use --yesterday for cron jobs that run at midnight
         
     weekly-summary [email] [date]
         Generate weekly summary report (7 days ending on date)
@@ -796,7 +797,12 @@ case "$1" in
         process_pending "${2:-}"
         ;;
     daily-summary)
-        daily_summary "${2:-}" "${3:-}"
+        # Handle --yesterday flag for cron jobs that run at midnight
+        if [[ "$2" == "--yesterday" ]]; then
+            daily_summary "${3:-}" "$(date -d 'yesterday' '+%Y-%m-%d')"
+        else
+            daily_summary "${2:-}" "${3:-}"
+        fi
         ;;
     weekly-summary)
         weekly_summary "${2:-}" "${3:-}"
