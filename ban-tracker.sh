@@ -252,9 +252,9 @@ daily_summary() {
     # Check if fail2ban is running
     local f2b_status=""
     if systemctl is-active fail2ban >/dev/null 2>&1; then
-        f2b_status="✓ Fail2ban is ACTIVE"
+        f2b_status="Fail2ban is ACTIVE"
     else
-        f2b_status="⚠️  WARNING: FAIL2BAN IS NOT RUNNING! No bans are being enforced!"
+        f2b_status="WARNING: FAIL2BAN IS NOT RUNNING! No bans are being enforced!"
     fi
     
     # Count NEW bans that occurred on specified date (exclude restore-ban)
@@ -426,9 +426,9 @@ weekly_summary() {
     # Check if fail2ban is running
     local f2b_status=""
     if systemctl is-active fail2ban >/dev/null 2>&1; then
-        f2b_status="✓ Fail2ban is ACTIVE"
+        f2b_status="Fail2ban is ACTIVE"
     else
-        f2b_status="⚠️  WARNING: FAIL2BAN IS NOT RUNNING! No bans are being enforced!"
+        f2b_status="WARNING: FAIL2BAN IS NOT RUNNING! No bans are being enforced!"
     fi
     
     # Count events by strike level for the week
