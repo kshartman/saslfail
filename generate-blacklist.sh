@@ -13,13 +13,14 @@ Generate a blacklist of IPs that have reached Strike 3 multiple times.
 
 Options:
   --threshold N       Minimum Strike 3 bans to include (default: 3)
-  --format [TYPE]     Output format: list, csv, md (default: csv if flag present, list if absent)
+  --format [TYPE]     Output format: list, csv, md, doc (default: csv if flag present, list if absent)
   -h, --help          Show this help message
 
 Output Formats:
   list    Plain IP list sorted numerically (for ipset/firewall)
   csv     CSV with ip,strike3,strike2,strike1,total (sorted by strike3 desc)
   md      Markdown table with strike breakdown (sorted by strike3 desc)
+  doc     Full markdown document with header and table
 
 Note: Each Strike 3 = 32-day ban. IPs reaching Strike 3 multiple times are persistent attackers.
 
@@ -29,6 +30,7 @@ Examples:
   $(basename "$0") --format               # CSV output (default when --format used)
   $(basename "$0") --format csv           # CSV output (explicit)
   $(basename "$0") --format md            # Markdown table
+  $(basename "$0") --format doc           # Full markdown document
   $(basename "$0") --format list          # Same as no --format flag
 EOF
     exit 0
@@ -56,12 +58,12 @@ while [[ $# -gt 0 ]]; do
                 shift
             else
                 case "$2" in
-                    list|csv|md)
+                    list|csv|md|doc)
                         FORMAT="$2"
                         shift 2
                         ;;
                     *)
-                        echo "Error: --format must be list, csv, or md" >&2
+                        echo "Error: --format must be list, csv, md, or doc" >&2
                         exit 1
                         ;;
                 esac
@@ -122,6 +124,39 @@ case "$FORMAT" in
         ;;
     md)
         # Output Markdown table with strike breakdown, sorted by Strike 3 count descending
+        echo "| IP | Strike 3 | Strike 2 | Strike 1 | Total |"
+        echo "|-----|----------|----------|----------|-------|"
+        awk -F'|' '
+        NR > 1 && $4 == "ban" {
+            ip = $2
+            strike = $5
+            total[ip]++
+            if (strike == 3) s3[ip]++
+            else if (strike == 2) s2[ip]++
+            else if (strike == 1) s1[ip]++
+        }
+        END {
+            for (ip in s3) {
+                if (s3[ip] >= '"$THRESHOLD"') {
+                    printf "%s,%d,%d,%d,%d\n", ip, s3[ip]+0, s2[ip]+0, s1[ip]+0, total[ip]
+                }
+            }
+        }
+        ' "$BAN_DB" | sort -t',' -k2 -rn | awk -F',' '{printf "| %s | %d | %d | %d | %d |\n", $1, $2, $3, $4, $5}'
+        ;;
+    doc)
+        # Output full Markdown document with header and table
+        ip_count=$(awk -F'|' '
+        NR > 1 && $4 == "ban" && $5 == 3 { s3[$2]++ }
+        END { count=0; for (ip in s3) if (s3[ip] >= '"$THRESHOLD"') count++; print count }
+        ' "$BAN_DB")
+
+        echo "# SASLFAIL Blacklist - Repeat Offenders"
+        echo ""
+        echo "**Generated:** $(date '+%Y-%m-%d')"
+        echo "**Threshold:** ${THRESHOLD}+ Strike 3 bans"
+        echo "**Total IPs:** ${ip_count}"
+        echo ""
         echo "| IP | Strike 3 | Strike 2 | Strike 1 | Total |"
         echo "|-----|----------|----------|----------|-------|"
         awk -F'|' '
