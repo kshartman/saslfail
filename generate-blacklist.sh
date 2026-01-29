@@ -12,7 +12,7 @@ Usage: $(basename "$0") [OPTIONS]
 Generate a blacklist of IPs that have reached Strike 3 multiple times.
 
 Options:
-  --threshold N       Minimum Strike 3 bans to include (default: 3)
+  --threshold N       Minimum Strike 3 bans to include (default: 2)
   --format [TYPE]     Output format: list, csv, md, doc (default: csv if flag present, list if absent)
   -h, --help          Show this help message
 
@@ -25,8 +25,8 @@ Output Formats:
 Note: Each Strike 3 = 32-day ban. IPs reaching Strike 3 multiple times are persistent attackers.
 
 Examples:
-  $(basename "$0")                        # Plain IP list with 3+ Strike 3 bans
-  $(basename "$0") --threshold 5          # IPs with 5+ Strike 3 bans
+  $(basename "$0")                        # Plain IP list with 2+ Strike 3 bans
+  $(basename "$0") --threshold 3          # IPs with 3+ Strike 3 bans
   $(basename "$0") --format               # CSV output (default when --format used)
   $(basename "$0") --format csv           # CSV output (explicit)
   $(basename "$0") --format md            # Markdown table
@@ -37,7 +37,7 @@ EOF
 }
 
 # Defaults
-THRESHOLD=3
+THRESHOLD=2
 FORMAT="list"
 
 # Parse arguments
