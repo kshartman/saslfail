@@ -323,10 +323,10 @@ daily_summary() {
     local unique_active_ips=$(echo -e "$active_ips" | cut -d':' -f1 | sort -u)
     local active_count=$(echo "$unique_active_ips" | grep -c . 2>/dev/null || echo 0)
     
-    # Get top offending IPs from last 7 days (exclude restore-ban)
+    # Get new Strike 3 bans from last 7 days (exclude restore-ban)
     local week_ago=$(date -d '7 days ago' '+%Y-%m-%d')
-    local top_ips=$(grep -v "|restore-ban|" "$BAN_DB" | awk -F'|' -v start="$week_ago" '$1 >= start && $4 == "ban" {print $2}' | \
-                    sort | uniq -c | sort -rn | head -10)
+    local new_strike3=$(grep -v "|restore-ban|" "$BAN_DB" | awk -F'|' -v start="$week_ago" '$1 >= start && $4 == "ban" && $5 == 3 {print "  " $1 " " $2}' | \
+                    sort -r | head -10)
     
     # Format currently active bans by strike level
     local active_by_strike=""
@@ -391,8 +391,8 @@ Date: $date
 - Active Third Strike: $active_third
 - Total Unique IPs Currently Banned: $active_count
 
-=== TOP OFFENDING IPs (Last 7 Days):
-$(if [[ -n "$top_ips" ]]; then echo "$top_ips"; else echo "  No bans in last 7 days"; fi)
+=== NEW STRIKE 3 BANS (Last 7 Days):
+$(if [[ -n "$new_strike3" ]]; then echo "$new_strike3"; else echo "  None"; fi)
 
 $active_by_strike
 
@@ -455,9 +455,9 @@ weekly_summary() {
         '$1 >= start && $1 <= end && $4 == "ban" {print $2}' | sort -u)
     local unique_count=$(echo "$unique_ips" | grep -c . 2>/dev/null || echo 0)
 
-    # Get top offending IPs for the week (exclude restore-ban)
-    local top_ips=$(grep -v "|restore-ban|" "$BAN_DB" | awk -F'|' -v start="$start_date" -v end="$end_date 23:59:59" \
-        '$1 >= start && $1 <= end && $4 == "ban" {print $2}' | sort | uniq -c | sort -rn | head -20)
+    # Get new Strike 3 bans for the week (exclude restore-ban)
+    local new_strike3=$(grep -v "|restore-ban|" "$BAN_DB" | awk -F'|' -v start="$start_date" -v end="$end_date 23:59:59" \
+        '$1 >= start && $1 <= end && $4 == "ban" && $5 == 3 {print "  " $1 " " $2}' | sort -r | head -20)
     
     # Create summary content
     local summary_content="SASL Authentication Failure - Weekly Summary
@@ -474,8 +474,8 @@ Weekly Ban Statistics:
 Daily Breakdown:
 $(echo -e "$daily_stats")
 
-Top 20 Offending IPs This Week:
-$top_ips
+New Strike 3 Bans This Week:
+$(if [[ -n "$new_strike3" ]]; then echo "$new_strike3"; else echo "  None"; fi)
 
 Currently Active Bans:
 $(monitor-postfix-bans.sh 2>/dev/null | grep -A 100 "CURRENTLY BANNED IPs:" || echo "Unable to fetch current bans")
