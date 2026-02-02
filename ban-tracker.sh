@@ -29,18 +29,29 @@ log_message() {
 get_strike_level() {
     local jail="$1"
     case "$jail" in
-        postfix-sasl-first) echo 1 ;;
-        postfix-sasl-second) echo 2 ;;
-        postfix-sasl-third) echo 3 ;;
+        postfix-sasl-first|dovecot-first) echo 1 ;;
+        postfix-sasl-second|dovecot-second) echo 2 ;;
+        postfix-sasl-third|dovecot-third) echo 3 ;;
         *) echo 0 ;;
     esac
 }
 
-# Function to count previous offenses for an IP
+# Function to get jail family (postfix-sasl or dovecot)
+get_jail_family() {
+    local jail="$1"
+    case "$jail" in
+        postfix-sasl-*) echo "postfix-sasl" ;;
+        dovecot-*) echo "dovecot" ;;
+        *) echo "" ;;
+    esac
+}
+
+# Function to count previous offenses for an IP within a jail family
 count_offenses() {
     local ip="$1"
-    # Count real ban entries only (exclude restore-ban)
-    grep "|$ip|.*|ban|" "$BAN_DB" 2>/dev/null | grep -v "|restore-ban|" | wc -l
+    local family="$2"
+    # Count real ban entries only (exclude restore-ban), filter by jail family
+    grep "|$ip|${family}-" "$BAN_DB" 2>/dev/null | grep "|ban|" | grep -v "|restore-ban|" | wc -l
 }
 
 # Function to record a ban event
@@ -51,15 +62,17 @@ record_ban() {
     local current_time=$(date '+%Y-%m-%d %H:%M:%S')
     local epoch_time=$(date +%s)
 
-    # Only process Strike 1 detections (the actual SASL failure detector)
+    # Only process Strike 1 detections (the actual failure detectors)
     # Strike 2/3 jails have no filters - we populate them via escalation
-    if [[ "$jail" != "postfix-sasl-first" ]]; then
+    if [[ "$jail" != "postfix-sasl-first" && "$jail" != "dovecot-first" ]]; then
         log_message "Ignoring non-Strike1 ban call: IP=$ip, Jail=$jail"
         return
     fi
 
-    # Check if there's an unexpired ban (indicates restart/restore)
-    local last_ban=$(grep "|$ip|.*|ban|" "$BAN_DB" 2>/dev/null | tail -1)
+    local family=$(get_jail_family "$jail")
+
+    # Check if there's an unexpired ban for this family (indicates restart/restore)
+    local last_ban=$(grep "|$ip|${family}-" "$BAN_DB" 2>/dev/null | grep "|ban|" | tail -1)
     if [[ -n "$last_ban" ]]; then
         local last_ban_time=$(echo "$last_ban" | cut -d'|' -f1)
         local last_strike=$(echo "$last_ban" | cut -d'|' -f5)
@@ -75,21 +88,21 @@ record_ban() {
         fi
     fi
 
-    # Count previous offenses to determine strike level
-    local prev_offenses=$(count_offenses "$ip")
+    # Count previous offenses to determine strike level (within same jail family)
+    local prev_offenses=$(count_offenses "$ip" "$family")
     local offense_num=$((prev_offenses + 1))
     local strike_level
     local target_jail
 
     if [[ $offense_num -eq 1 ]]; then
         strike_level=1
-        target_jail="postfix-sasl-first"
+        target_jail="${family}-first"
     elif [[ $offense_num -eq 2 ]]; then
         strike_level=2
-        target_jail="postfix-sasl-second"
+        target_jail="${family}-second"
     else
         strike_level=3
-        target_jail="postfix-sasl-third"
+        target_jail="${family}-third"
     fi
 
     log_message "Offense #$offense_num for $ip → Strike $strike_level"
@@ -105,8 +118,8 @@ record_ban() {
         log_message "Escalated $ip to $target_jail"
 
         # Remove from Strike 1 jail (they're now in a higher jail)
-        fail2ban-client set postfix-sasl-first unbanip "$ip" 2>/dev/null
-        log_message "Removed $ip from postfix-sasl-first"
+        fail2ban-client set "${family}-first" unbanip "$ip" 2>/dev/null
+        log_message "Removed $ip from ${family}-first"
     fi
 
     # Handle notifications
@@ -279,14 +292,9 @@ daily_summary() {
     while read -r ip; do
         [[ -z "$ip" ]] && continue
         
-        # Check each jail for this IP
-        for jail in postfix-sasl-first postfix-sasl-second postfix-sasl-third; do
-            local strike_level
-            case "$jail" in
-                postfix-sasl-first) strike_level=1 ;;
-                postfix-sasl-second) strike_level=2 ;;
-                postfix-sasl-third) strike_level=3 ;;
-            esac
+        # Check each jail for this IP (both postfix-sasl and dovecot families)
+        for jail in postfix-sasl-first postfix-sasl-second postfix-sasl-third dovecot-first dovecot-second dovecot-third; do
+            local strike_level=$(get_strike_level "$jail")
             
             # Get last real ban and unban for this IP/jail combo (exclude restore events)
             local last_ban=$(grep "|$ip|$jail|ban|" "$BAN_DB" | grep -v "|restore-ban|" | tail -1)
