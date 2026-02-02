@@ -270,10 +270,18 @@ daily_summary() {
         f2b_status="WARNING: FAIL2BAN IS NOT RUNNING! No bans are being enforced!"
     fi
     
-    # Count NEW bans that occurred on specified date (exclude restore-ban)
+    # Count NEW bans that occurred on specified date (exclude restore-ban), broken down by service
     local new_first_strike=$(grep "^$date" "$BAN_DB" | grep "|ban|1|" | grep -cv "|restore-ban|")
+    local new_first_postfix=$(grep "^$date" "$BAN_DB" | grep "|postfix-sasl-" | grep "|ban|1|" | grep -cv "|restore-ban|")
+    local new_first_dovecot=$(grep "^$date" "$BAN_DB" | grep "|dovecot-" | grep "|ban|1|" | grep -cv "|restore-ban|")
+
     local new_second_strike=$(grep "^$date" "$BAN_DB" | grep "|ban|2|" | grep -cv "|restore-ban|")
+    local new_second_postfix=$(grep "^$date" "$BAN_DB" | grep "|postfix-sasl-" | grep "|ban|2|" | grep -cv "|restore-ban|")
+    local new_second_dovecot=$(grep "^$date" "$BAN_DB" | grep "|dovecot-" | grep "|ban|2|" | grep -cv "|restore-ban|")
+
     local new_third_strike=$(grep "^$date" "$BAN_DB" | grep "|ban|3|" | grep -cv "|restore-ban|")
+    local new_third_postfix=$(grep "^$date" "$BAN_DB" | grep "|postfix-sasl-" | grep "|ban|3|" | grep -cv "|restore-ban|")
+    local new_third_dovecot=$(grep "^$date" "$BAN_DB" | grep "|dovecot-" | grep "|ban|3|" | grep -cv "|restore-ban|")
 
     # Get unique IPs that received NEW bans on date (exclude restore-ban)
     local new_banned_ips=$(grep "^$date" "$BAN_DB" | grep "|ban|" | grep -v "|restore-ban|" | cut -d'|' -f2 | sort -u)
@@ -284,6 +292,12 @@ daily_summary() {
     local active_first=0
     local active_second=0
     local active_third=0
+    local active_first_postfix=0
+    local active_first_dovecot=0
+    local active_second_postfix=0
+    local active_second_dovecot=0
+    local active_third_postfix=0
+    local active_third_dovecot=0
     local active_ips=""
     
     # Get all unique IPs from database
@@ -307,19 +321,21 @@ daily_summary() {
                     local unban_time=$(echo "$last_unban" | cut -d'|' -f1)
                     # If ban is after unban, IP is currently banned in this jail
                     if [[ "$ban_time" > "$unban_time" ]]; then
+                        local family=$(get_jail_family "$jail")
                         case $strike_level in
-                            1) ((active_first++)) ;;
-                            2) ((active_second++)) ;;
-                            3) ((active_third++)) ;;
+                            1) ((active_first++)); [[ "$family" == "postfix-sasl" ]] && ((active_first_postfix++)) || ((active_first_dovecot++)) ;;
+                            2) ((active_second++)); [[ "$family" == "postfix-sasl" ]] && ((active_second_postfix++)) || ((active_second_dovecot++)) ;;
+                            3) ((active_third++)); [[ "$family" == "postfix-sasl" ]] && ((active_third_postfix++)) || ((active_third_dovecot++)) ;;
                         esac
                         active_ips="${active_ips}${ip}:${strike_level}\n"
                     fi
                 else
                     # No unban record means IP is still banned
+                    local family=$(get_jail_family "$jail")
                     case $strike_level in
-                        1) ((active_first++)) ;;
-                        2) ((active_second++)) ;;
-                        3) ((active_third++)) ;;
+                        1) ((active_first++)); [[ "$family" == "postfix-sasl" ]] && ((active_first_postfix++)) || ((active_first_dovecot++)) ;;
+                        2) ((active_second++)); [[ "$family" == "postfix-sasl" ]] && ((active_second_postfix++)) || ((active_second_dovecot++)) ;;
+                        3) ((active_third++)); [[ "$family" == "postfix-sasl" ]] && ((active_third_postfix++)) || ((active_third_dovecot++)) ;;
                     esac
                     active_ips="${active_ips}${ip}:${strike_level}\n"
                 fi
@@ -388,15 +404,15 @@ Date: $date
 === FAIL2BAN STATUS: $f2b_status
 
 === NEW BANS TODAY:
-- First Strike Bans: $new_first_strike
-- Second Strike Bans: $new_second_strike  
-- Third Strike Bans: $new_third_strike
+- First Strike Bans: $new_first_strike (postfix $new_first_postfix, dovecot $new_first_dovecot)
+- Second Strike Bans: $new_second_strike (postfix $new_second_postfix, dovecot $new_second_dovecot)
+- Third Strike Bans: $new_third_strike (postfix $new_third_postfix, dovecot $new_third_dovecot)
 - Unique IPs Banned Today: $new_banned_count
 
 === CURRENTLY ACTIVE BANS (Total):
-- Active First Strike: $active_first
-- Active Second Strike: $active_second
-- Active Third Strike: $active_third
+- Active First Strike: $active_first (postfix $active_first_postfix, dovecot $active_first_dovecot)
+- Active Second Strike: $active_second (postfix $active_second_postfix, dovecot $active_second_dovecot)
+- Active Third Strike: $active_third (postfix $active_third_postfix, dovecot $active_third_dovecot)
 - Total Unique IPs Currently Banned: $active_count
 
 === NEW STRIKE 3 BANS (Last 7 Days):
