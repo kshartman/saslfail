@@ -557,75 +557,43 @@ report_current_bans() {
     echo
     printf "%-15s | %-8s | %-20s | %-20s | %-10s\n" "IP Address" "Strike" "Jail" "Banned Since" "Duration"
     echo "----------------------------------------------------------------------------------------"
-    
+
     # Get unique IPs
     local ips=$(tail -n +2 "$BAN_DB" | cut -d'|' -f2 | sort -u)
-    
+
+    # Duration labels by strike level
+    local -a durations=([1]="48 hours" [2]="8 days" [3]="32 days")
+
     while read -r ip; do
         [[ -z "$ip" ]] && continue
-        
-        # Get last ban and unban for each jail
-        local first_ban=$(grep "|$ip|postfix-sasl-first|ban|" "$BAN_DB" | tail -1)
-        local first_unban=$(grep "|$ip|postfix-sasl-first|unban|" "$BAN_DB" | tail -1)
-        local second_ban=$(grep "|$ip|postfix-sasl-second|ban|" "$BAN_DB" | tail -1)
-        local second_unban=$(grep "|$ip|postfix-sasl-second|unban|" "$BAN_DB" | tail -1)
-        local third_ban=$(grep "|$ip|postfix-sasl-third|ban|" "$BAN_DB" | tail -1)
-        local third_unban=$(grep "|$ip|postfix-sasl-third|unban|" "$BAN_DB" | tail -1)
-        
-        # Check each strike level
-        if [[ -n "$third_ban" ]]; then
-            local ban_time=$(echo "$third_ban" | cut -d'|' -f1)
-            if [[ -n "$third_unban" ]]; then
-                local unban_time=$(echo "$third_unban" | cut -d'|' -f1)
-                if [[ "$ban_time" > "$unban_time" ]]; then
-                    # Currently banned - find the original ban (first ban after last real unban or first ever)
-                    local original_ban=$(grep "|$ip|postfix-sasl-third|ban|" "$BAN_DB" | head -1 | cut -d'|' -f1)
-                    printf "%-15s | %-8s | %-20s | %-20s | %-10s\n" "$ip" "3" "postfix-sasl-third" "$original_ban" "32 days"
-                    continue
+
+        # Check all jails, prioritize highest strike level
+        # Order: third jails first (highest priority), then second, then first
+        for jail in postfix-sasl-third dovecot-third postfix-sasl-second dovecot-second postfix-sasl-first dovecot-first; do
+            local strike_level=$(get_strike_level "$jail")
+            local last_ban=$(grep "|$ip|$jail|ban|" "$BAN_DB" | grep -v "|restore-ban|" | tail -1)
+
+            if [[ -n "$last_ban" ]]; then
+                local ban_time=$(echo "$last_ban" | cut -d'|' -f1)
+                local last_unban=$(grep "|$ip|$jail|unban|" "$BAN_DB" | grep -v "|restore-unban|" | tail -1)
+                local is_active=false
+
+                if [[ -n "$last_unban" ]]; then
+                    local unban_time=$(echo "$last_unban" | cut -d'|' -f1)
+                    [[ "$ban_time" > "$unban_time" ]] && is_active=true
+                else
+                    is_active=true
                 fi
-            else
-                # No unban record - use first ban time
-                local original_ban=$(grep "|$ip|postfix-sasl-third|ban|" "$BAN_DB" | head -1 | cut -d'|' -f1)
-                printf "%-15s | %-8s | %-20s | %-20s | %-10s\n" "$ip" "3" "postfix-sasl-third" "$original_ban" "32 days"
-                continue
-            fi
-        fi
-        
-        if [[ -n "$second_ban" ]]; then
-            local ban_time=$(echo "$second_ban" | cut -d'|' -f1)
-            if [[ -n "$second_unban" ]]; then
-                local unban_time=$(echo "$second_unban" | cut -d'|' -f1)
-                if [[ "$ban_time" > "$unban_time" ]]; then
-                    # Currently banned - find the original ban
-                    local original_ban=$(grep "|$ip|postfix-sasl-second|ban|" "$BAN_DB" | head -1 | cut -d'|' -f1)
-                    printf "%-15s | %-8s | %-20s | %-20s | %-10s\n" "$ip" "2" "postfix-sasl-second" "$original_ban" "8 days"
-                    continue
+
+                if [[ "$is_active" == "true" ]]; then
+                    local original_ban=$(grep "|$ip|$jail|ban|" "$BAN_DB" | grep -v "|restore-ban|" | head -1 | cut -d'|' -f1)
+                    printf "%-15s | %-8s | %-20s | %-20s | %-10s\n" "$ip" "$strike_level" "$jail" "$original_ban" "${durations[$strike_level]}"
+                    break  # Found highest active strike for this IP
                 fi
-            else
-                # No unban record - use first ban time
-                local original_ban=$(grep "|$ip|postfix-sasl-second|ban|" "$BAN_DB" | head -1 | cut -d'|' -f1)
-                printf "%-15s | %-8s | %-20s | %-20s | %-10s\n" "$ip" "2" "postfix-sasl-second" "$original_ban" "8 days"
-                continue
             fi
-        fi
-        
-        if [[ -n "$first_ban" ]]; then
-            local ban_time=$(echo "$first_ban" | cut -d'|' -f1)
-            if [[ -n "$first_unban" ]]; then
-                local unban_time=$(echo "$first_unban" | cut -d'|' -f1)
-                if [[ "$ban_time" > "$unban_time" ]]; then
-                    # Currently banned - find the original ban
-                    local original_ban=$(grep "|$ip|postfix-sasl-first|ban|" "$BAN_DB" | head -1 | cut -d'|' -f1)
-                    printf "%-15s | %-8s | %-20s | %-20s | %-10s\n" "$ip" "1" "postfix-sasl-first" "$original_ban" "48 hours"
-                fi
-            else
-                # No unban record - use first ban time
-                local original_ban=$(grep "|$ip|postfix-sasl-first|ban|" "$BAN_DB" | head -1 | cut -d'|' -f1)
-                printf "%-15s | %-8s | %-20s | %-20s | %-10s\n" "$ip" "1" "postfix-sasl-first" "$original_ban" "48 hours"
-            fi
-        fi
+        done
     done <<< "$ips"
-    
+
     echo
     echo "Note: Shows highest strike level for each IP currently banned"
 }
